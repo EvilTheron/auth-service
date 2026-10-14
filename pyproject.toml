@@ -1,7 +1,7 @@
 [project]
 name = "auth-service"
 version = "0.1.0"
-description = "Add your description here"
+description = "Authentication service with JWT, refresh token rotation and Bloom filter password check"
 readme = "README.md"
 authors = [
     { name = "Yaro", email = "bestprohor@gmail.com" }
