@@ -7,7 +7,10 @@ authors = [
     { name = "Yaro", email = "bestprohor@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "fastapi>=0.143.1",
+    "uvicorn[standard]>=0.54.0",
+]
 
 [project.scripts]
 auth-service = "auth_service:main"
@@ -15,3 +18,14 @@ auth-service = "auth_service:main"
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.0",
+]
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
