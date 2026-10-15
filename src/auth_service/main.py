@@ -1,14 +1,11 @@
-from typing import Annotated
-
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth_service.db.session import get_session
+from auth_service.api.deps import SessionDep
+from auth_service.api.routers import auth
 
 app = FastAPI(title="Auth Service")
-
-SessionDep = Annotated[AsyncSession, Depends(get_session)]
+app.include_router(auth.router)
 
 
 @app.get("/health")
