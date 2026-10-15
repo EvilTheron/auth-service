@@ -17,19 +17,18 @@ class Settings(BaseSettings):
     redis_host: str = "localhost"
     redis_port: int = 6379
 
+    @property
+    def database_url(self) -> URL:
+        return URL.create(
+            "postgresql+asyncpg",
+            username=self.postgres_user,
+            password=self.postgres_password.get_secret_value(),
+            host=self.postgres_host,
+            port=self.postgres_port,
+            database=self.postgres_db,
+        )
+
 
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-
-
-@property
-def database_url(self) -> URL:
-    return URL.create(
-        "postgresql+asyncpg",
-        username=self.postgres_user,
-        password=self.postgres_password.get_secret_value(),
-        host=self.postgres_host,
-        port=self.postgres_port,
-        database=self.postgres_db,
-    )
