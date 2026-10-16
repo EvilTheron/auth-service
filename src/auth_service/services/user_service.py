@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,3 +39,7 @@ async def authenticate(session: AsyncSession, email: str, password: str) -> User
     if not verify_password(password, user.password_hash) or not user.is_active:
         return None
     return user
+
+
+async def get_user_by_id(session: AsyncSession, user_id: uuid.UUID) -> User | None:
+    return await session.get(User, user_id)

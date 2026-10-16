@@ -2,10 +2,11 @@ from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
 
 from auth_service.api.deps import SessionDep
-from auth_service.api.routers import auth
+from auth_service.api.routers import auth, users
 
 app = FastAPI(title="Auth Service")
 app.include_router(auth.router)
+app.include_router(users.router)
 
 
 @app.get("/health")
