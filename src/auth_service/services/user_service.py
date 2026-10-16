@@ -2,8 +2,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth_service.core.security import hash_password
+from auth_service.core.security import hash_password, verify_password
 from auth_service.db.models import User
+
+_DUMMY_HASH = hash_password("dummy-password")
 
 
 class EmailAlreadyRegisteredError(Exception):
@@ -24,4 +26,14 @@ async def create_user(session: AsyncSession, email: str, password: str) -> User:
         await session.rollback()
         raise EmailAlreadyRegisteredError from exc
     await session.refresh(user)
+    return user
+
+
+async def authenticate(session: AsyncSession, email: str, password: str) -> User | None:
+    user = await get_user_by_email(session, email)
+    if user is None:
+        verify_password(password, _DUMMY_HASH)
+        return None
+    if not verify_password(password, user.password_hash) or not user.is_active:
+        return None
     return user

@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     redis_host: str = "localhost"
     redis_port: int = 6379
 
+    jwt_secret: SecretStr
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 15
+
     @property
     def database_url(self) -> URL:
         return URL.create(
