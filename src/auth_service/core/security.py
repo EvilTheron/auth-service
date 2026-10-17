@@ -22,11 +22,12 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def create_access_token(user_id: uuid.UUID) -> str:
+def create_access_token(user_id: uuid.UUID, session_id: str) -> str:
     settings = get_settings()
     now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
+        "sid": session_id,
         "iat": now,
         "exp": now + timedelta(minutes=settings.access_token_expire_minutes),
         "jti": uuid.uuid4().hex,
@@ -44,5 +45,5 @@ def decode_access_token(token: str) -> dict[str, Any]:
         token,
         settings.jwt_secret.get_secret_value(),
         algorithms=[settings.jwt_algorithm],
-        options={"require": ["exp", "iat", "sub", "jti"]},
+        options={"require": ["exp", "iat", "sub", "sid", "jti"]},
     )

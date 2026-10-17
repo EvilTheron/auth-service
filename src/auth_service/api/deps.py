@@ -4,8 +4,10 @@ from typing import Annotated
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from auth_service.core.redis import get_redis
 from auth_service.core.security import decode_access_token
 from auth_service.db.models import User
 from auth_service.db.session import get_session
@@ -14,6 +16,8 @@ from auth_service.services import user_service
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+
+RedisDep = Annotated[Redis, Depends(get_redis)]
 
 
 async def get_current_user(

@@ -1,14 +1,14 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 
-from auth_service.api.deps import SessionDep
+from auth_service.api.deps import RedisDep, SessionDep
 from auth_service.core.security import create_access_token
 from auth_service.db.models import User
 from auth_service.schemas.token import Token
 from auth_service.schemas.user import UserCreate, UserRead
-from auth_service.services import user_service
+from auth_service.services import token_service, user_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -26,8 +26,10 @@ async def register(data: UserCreate, session: SessionDep) -> User:
 
 @router.post("/login", response_model=Token)
 async def login(
+    request: Request,
     form: Annotated[OAuth2PasswordRequestForm, Depends()],
     session: SessionDep,
+    redis: RedisDep,
 ) -> Token:
     user = await user_service.authenticate(session, form.username, form.password)
     if user is None:
@@ -36,4 +38,13 @@ async def login(
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return Token(access_token=create_access_token(user.id))
+    session_id, refresh_token = await token_service.create_session(
+        redis,
+        user.id,
+        user_agent=request.headers.get("user-agent", ""),
+        ip=request.client.host if request.client else "",
+    )
+    return Token(
+        access_token=create_access_token(user.id, session_id),
+        refresh_token=refresh_token,
+    )
