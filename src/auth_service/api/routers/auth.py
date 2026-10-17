@@ -6,7 +6,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from auth_service.api.deps import RedisDep, SessionDep
 from auth_service.core.security import create_access_token
 from auth_service.db.models import User
-from auth_service.schemas.token import Token
+from auth_service.schemas.token import RefreshRequest, Token
 from auth_service.schemas.user import UserCreate, UserRead
 from auth_service.services import token_service, user_service
 
@@ -47,4 +47,32 @@ async def login(
     return Token(
         access_token=create_access_token(user.id, session_id),
         refresh_token=refresh_token,
+    )
+
+
+def _invalid_refresh_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid refresh token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+@router.post("/refresh", response_model=Token)
+async def refresh(data: RefreshRequest, session: SessionDep, redis: RedisDep) -> Token:
+    try:
+        user_id, session_id, new_refresh_token = await token_service.rotate_refresh_token(
+            redis, data.refresh_token
+        )
+    except token_service.InvalidRefreshTokenError as exc:
+        raise _invalid_refresh_error() from exc
+
+    user = await user_service.get_user_by_id(session, user_id)
+    if user is None or not user.is_active:
+        await token_service.revoke_session(redis, session_id)
+        raise _invalid_refresh_error()
+
+    return Token(
+        access_token=create_access_token(user.id, session_id),
+        refresh_token=new_refresh_token,
     )

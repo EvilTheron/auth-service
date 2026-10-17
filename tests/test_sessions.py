@@ -2,7 +2,7 @@ from httpx import AsyncClient
 from redis.asyncio import Redis
 
 from auth_service.services.token_service import hash_token
-from tests.helpers import login, register
+from tests.helpers import login, refresh, register
 
 
 async def test_login_creates_session_in_redis(client: AsyncClient, redis_client: Redis):
@@ -17,3 +17,36 @@ async def test_refresh_token_is_not_stored_in_plain_text(client: AsyncClient, re
     await register(client)
     refresh_token = (await login(client)).json()["refresh_token"]
     assert await redis_client.exists(f"refresh:{refresh_token}") == 0
+
+
+async def test_refresh_rotates_tokens(client: AsyncClient):
+    await register(client)
+    first = (await login(client)).json()
+
+    response = await refresh(client, first["refresh_token"])
+    assert response.status_code == 200
+    second = response.json()
+    assert second["refresh_token"] != first["refresh_token"]
+
+    me = await client.get(
+        "/users/me",
+        headers={"Authorization": f"Bearer {second['access_token']}"},
+    )
+    assert me.status_code == 200
+
+
+async def test_refresh_unknown_token(client: AsyncClient):
+    response = await refresh(client, "not-a-real-token")
+    assert response.status_code == 401
+
+
+async def test_refresh_reuse_revokes_whole_session(client: AsyncClient):
+    await register(client)
+    first = (await login(client)).json()
+    second = (await refresh(client, first["refresh_token"])).json()
+
+    reuse = await refresh(client, first["refresh_token"])
+    assert reuse.status_code == 401
+
+    after = await refresh(client, second["refresh_token"])
+    assert after.status_code == 401

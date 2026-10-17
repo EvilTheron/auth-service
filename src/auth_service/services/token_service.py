@@ -8,6 +8,14 @@ from redis.asyncio import Redis
 from auth_service.core.config import get_settings
 
 
+class InvalidRefreshTokenError(Exception):
+    pass
+
+
+class RefreshTokenReuseError(InvalidRefreshTokenError):
+    pass
+
+
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -42,3 +50,48 @@ async def create_session(
         await pipe.execute()
 
     return session_id, refresh_token
+
+
+async def revoke_session(redis: Redis, session_id: str) -> None:
+    user_id = await redis.hget(f"session:{session_id}", "user_id")
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.delete(f"session:{session_id}")
+        if user_id:
+            pipe.srem(f"user_sessions:{user_id}", session_id)
+        await pipe.execute()
+
+
+async def rotate_refresh_token(
+    redis: Redis,
+    refresh_token: str,
+) -> tuple[uuid.UUID, str, str]:
+    """Проверяет refresh-токен и выдаёт новый.
+
+    Возвращает (user_id, session_id, новый refresh-токен).
+    """
+    ttl = get_settings().refresh_token_expire_days * 24 * 60 * 60
+    token_hash = hash_token(refresh_token)
+
+    session_id = await redis.get(f"refresh:{token_hash}")
+    if session_id is None:
+        raise InvalidRefreshTokenError
+
+    session = await redis.hgetall(f"session:{session_id}")
+    if not session:
+        raise InvalidRefreshTokenError
+
+    first_use = await redis.set(f"used:{token_hash}", "1", nx=True, ex=ttl)
+    if not first_use:
+        await revoke_session(redis, session_id)
+        raise RefreshTokenReuseError
+
+    new_token = secrets.token_urlsafe(48)
+    user_id = session["user_id"]
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.set(f"refresh:{hash_token(new_token)}", session_id, ex=ttl)
+        pipe.hset(f"session:{session_id}", "last_used_at", datetime.now(UTC).isoformat())
+        pipe.expire(f"session:{session_id}", ttl)
+        pipe.expire(f"user_sessions:{user_id}", ttl)
+        await pipe.execute()
+
+    return uuid.UUID(user_id), session_id, new_token
