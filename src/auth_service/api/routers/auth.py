@@ -52,7 +52,7 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    await throttle_service.register_success(redis, email)
+    await throttle_service.register_success(redis, email, ip)
     session_id, refresh_token = await token_service.create_session(
         redis,
         user.id,

@@ -1,6 +1,7 @@
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from redis.asyncio import Redis
 
+from auth_service.main import app
 from tests.helpers import EMAIL, login, register
 
 
@@ -50,3 +51,22 @@ async def test_ip_blocked_after_too_many_failures(client: AsyncClient):
         await login(client, email=f"user{i}@example.com", password="whatever-password")
     response = await login(client, email="another@example.com", password="whatever-password")
     assert response.status_code == 429
+
+
+def client_from_ip(ip: str) -> AsyncClient:
+    transport = ASGITransport(app=app, client=(ip, 12345))
+    return AsyncClient(transport=transport, base_url="http://test")
+
+
+async def test_known_ip_can_login_while_account_is_locked(client: AsyncClient):
+    await register(client)
+    assert (await login(client)).status_code == 200  # IP теста становится знакомым
+
+    async with client_from_ip("203.0.113.7") as attacker:
+        for _ in range(5):
+            await login(attacker, password="wrong-password")
+        # чужой IP заблокирован, даже если пароль верный
+        assert (await login(attacker)).status_code == 429
+
+    # а владелец со знакомого IP входит
+    assert (await login(client)).status_code == 200

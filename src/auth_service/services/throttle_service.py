@@ -7,6 +7,7 @@ ACCOUNT_FREE_ATTEMPTS = 5
 ACCOUNT_COUNTER_TTL = 60 * 60
 LOCK_BASE_SECONDS = 30
 LOCK_MAX_SECONDS = 60 * 60
+KNOWN_IP_TTL_SECONDS = 30 * 24 * 60 * 60
 
 
 class TooManyAttemptsError(Exception):
@@ -16,13 +17,13 @@ class TooManyAttemptsError(Exception):
 
 
 async def check_login_allowed(redis: Redis, email: str, ip: str) -> None:
-    lock_ttl = await redis.ttl(f"login:lock:{email}")
-    if lock_ttl > 0:
-        raise TooManyAttemptsError(lock_ttl)
-
     ip_key = f"login:fail:ip:{ip}"
     if int(await redis.get(ip_key) or 0) >= IP_MAX_FAILURES:
         raise TooManyAttemptsError(max(await redis.ttl(ip_key), 1))
+
+    lock_ttl = await redis.ttl(f"login:lock:{email}")
+    if lock_ttl > 0 and not await redis.exists(f"login:known:{email}:{ip}"):
+        raise TooManyAttemptsError(lock_ttl)
 
 
 async def register_failure(redis: Redis, email: str, ip: str) -> None:
@@ -42,5 +43,8 @@ async def register_failure(redis: Redis, email: str, ip: str) -> None:
         await redis.set(f"login:lock:{email}", "1", ex=lock_seconds)
 
 
-async def register_success(redis: Redis, email: str) -> None:
-    await redis.delete(f"login:fail:acct:{email}")
+async def register_success(redis: Redis, email: str, ip: str) -> None:
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.delete(f"login:fail:acct:{email}", f"login:lock:{email}")
+        pipe.set(f"login:known:{email}:{ip}", "1", ex=KNOWN_IP_TTL_SECONDS)
+        await pipe.execute()
