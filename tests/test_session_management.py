@@ -59,3 +59,36 @@ async def test_cannot_delete_foreign_session(client: AsyncClient):
     )
     assert response.status_code == 404
     assert (await refresh(client, alice["refresh_token"])).status_code == 200
+
+
+async def test_access_token_stops_working_after_logout(client: AsyncClient):
+    await register(client)
+    tokens = (await login(client)).json()
+    headers = bearer(tokens["access_token"])
+
+    assert (await client.get("/users/me", headers=headers)).status_code == 200
+    await client.post("/auth/logout", headers=headers)
+    assert (await client.get("/users/me", headers=headers)).status_code == 401
+
+
+async def test_access_tokens_stop_working_after_logout_all(client: AsyncClient):
+    await register(client)
+    first = (await login(client)).json()
+    second = (await login(client)).json()
+
+    await client.post("/auth/logout-all", headers=bearer(first["access_token"]))
+
+    for tokens in (first, second):
+        response = await client.get("/users/me", headers=bearer(tokens["access_token"]))
+        assert response.status_code == 401
+
+
+async def test_access_token_stops_working_after_reuse_detection(client: AsyncClient):
+    await register(client)
+    first = (await login(client)).json()
+    second = (await refresh(client, first["refresh_token"])).json()
+
+    await refresh(client, first["refresh_token"])  # повтор старого токена: сессия убита
+
+    response = await client.get("/users/me", headers=bearer(second["access_token"]))
+    assert response.status_code == 401

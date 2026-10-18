@@ -29,11 +29,16 @@ def _credentials_error() -> HTTPException:
 
 async def get_token_payload(
     token: Annotated[str, Depends(oauth2_scheme)],
+    redis: RedisDep,
 ) -> dict[str, Any]:
     try:
-        return decode_access_token(token)
+        payload = decode_access_token(token)
     except jwt.InvalidTokenError as exc:
         raise _credentials_error() from exc
+
+    if not await redis.exists(f"session:{payload['sid']}"):
+        raise _credentials_error()
+    return payload
 
 
 TokenPayloadDep = Annotated[dict[str, Any], Depends(get_token_payload)]
