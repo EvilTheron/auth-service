@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -16,28 +16,38 @@ from auth_service.services import user_service
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
-
 RedisDep = Annotated[Redis, Depends(get_redis)]
 
 
-async def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    session: SessionDep,
-) -> User:
-    credentials_error = HTTPException(
+def _credentials_error() -> HTTPException:
+    return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+async def get_token_payload(
+    token: Annotated[str, Depends(oauth2_scheme)],
+) -> dict[str, Any]:
     try:
-        payload = decode_access_token(token)
+        return decode_access_token(token)
+    except jwt.InvalidTokenError as exc:
+        raise _credentials_error() from exc
+
+
+TokenPayloadDep = Annotated[dict[str, Any], Depends(get_token_payload)]
+
+
+async def get_current_user(payload: TokenPayloadDep, session: SessionDep) -> User:
+    try:
         user_id = uuid.UUID(payload["sub"])
-    except (jwt.InvalidTokenError, ValueError) as exc:
-        raise credentials_error from exc
+    except ValueError as exc:
+        raise _credentials_error() from exc
 
     user = await user_service.get_user_by_id(session, user_id)
     if user is None or not user.is_active:
-        raise credentials_error
+        raise _credentials_error()
     return user
 
 

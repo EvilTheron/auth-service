@@ -20,3 +20,7 @@ async def auth_headers(client: AsyncClient) -> dict[str, str]:
 
 async def refresh(client: AsyncClient, refresh_token: str) -> Response:
     return await client.post("/auth/refresh", json={"refresh_token": refresh_token})
+
+
+def bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}

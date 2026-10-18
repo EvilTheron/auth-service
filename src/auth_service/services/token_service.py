@@ -95,3 +95,33 @@ async def rotate_refresh_token(
         await pipe.execute()
 
     return uuid.UUID(user_id), session_id, new_token
+
+
+async def revoke_all_sessions(redis: Redis, user_id: uuid.UUID) -> None:
+    key = f"user_sessions:{user_id}"
+    session_ids = await redis.smembers(key)
+    async with redis.pipeline(transaction=True) as pipe:
+        for session_id in session_ids:
+            pipe.delete(f"session:{session_id}")
+        pipe.delete(key)
+        await pipe.execute()
+
+
+async def revoke_user_session(redis: Redis, user_id: uuid.UUID, session_id: str) -> bool:
+    owner = await redis.hget(f"session:{session_id}", "user_id")
+    if owner != str(user_id):
+        return False
+    await revoke_session(redis, session_id)
+    return True
+
+
+async def list_sessions(redis: Redis, user_id: uuid.UUID) -> list[dict[str, str]]:
+    key = f"user_sessions:{user_id}"
+    sessions = []
+    for session_id in await redis.smembers(key):
+        data = await redis.hgetall(f"session:{session_id}")
+        if not data:
+            await redis.srem(key, session_id)
+            continue
+        sessions.append({"id": session_id, **data})
+    return sorted(sessions, key=lambda s: s["created_at"], reverse=True)

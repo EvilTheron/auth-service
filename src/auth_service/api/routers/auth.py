@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 
-from auth_service.api.deps import RedisDep, SessionDep
+from auth_service.api.deps import CurrentUserDep, RedisDep, SessionDep, TokenPayloadDep
 from auth_service.core.security import create_access_token
 from auth_service.db.models import User
 from auth_service.schemas.token import RefreshRequest, Token
@@ -76,3 +76,13 @@ async def refresh(data: RefreshRequest, session: SessionDep, redis: RedisDep) ->
         access_token=create_access_token(user.id, session_id),
         refresh_token=new_refresh_token,
     )
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(payload: TokenPayloadDep, redis: RedisDep) -> None:
+    await token_service.revoke_session(redis, payload["sid"])
+
+
+@router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
+async def logout_all(user: CurrentUserDep, redis: RedisDep) -> None:
+    await token_service.revoke_all_sessions(redis, user.id)
