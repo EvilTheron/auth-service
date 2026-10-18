@@ -8,7 +8,7 @@ from auth_service.core.security import create_access_token
 from auth_service.db.models import User
 from auth_service.schemas.token import RefreshRequest, Token
 from auth_service.schemas.user import UserCreate, UserRead
-from auth_service.services import token_service, user_service
+from auth_service.services import throttle_service, token_service, user_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -31,18 +31,33 @@ async def login(
     session: SessionDep,
     redis: RedisDep,
 ) -> Token:
-    user = await user_service.authenticate(session, form.username, form.password)
+    email = form.username.lower()
+    ip = request.client.host if request.client else "unknown"
+
+    try:
+        await throttle_service.check_login_allowed(redis, email, ip)
+    except throttle_service.TooManyAttemptsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Try again later.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+
+    user = await user_service.authenticate(session, email, form.password)
     if user is None:
+        await throttle_service.register_failure(redis, email, ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    await throttle_service.register_success(redis, email)
     session_id, refresh_token = await token_service.create_session(
         redis,
         user.id,
         user_agent=request.headers.get("user-agent", ""),
-        ip=request.client.host if request.client else "",
+        ip=ip,
     )
     return Token(
         access_token=create_access_token(user.id, session_id),
