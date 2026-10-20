@@ -3,7 +3,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 
-from auth_service.api.deps import CurrentUserDep, RedisDep, SessionDep, TokenPayloadDep
+from auth_service.api.deps import (
+    CurrentUserDep,
+    PasswordFilterDep,
+    RedisDep,
+    SessionDep,
+    TokenPayloadDep,
+)
 from auth_service.core.security import create_access_token
 from auth_service.db.models import User
 from auth_service.schemas.token import RefreshRequest, Token
@@ -13,8 +19,20 @@ from auth_service.services import throttle_service, token_service, user_service
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
-async def register(data: UserCreate, session: SessionDep) -> User:
+async def register(
+    data: UserCreate,
+    session: SessionDep,
+    password_filter: PasswordFilterDep,
+) -> User:
+    if password_filter is not None and data.password in password_filter:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This password has appeared in known data breaches. Choose a different one.",
+        )
     try:
         return await user_service.create_user(session, data.email, data.password)
     except user_service.EmailAlreadyRegisteredError as exc:

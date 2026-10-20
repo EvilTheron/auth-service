@@ -1,4 +1,6 @@
 import uuid
+from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Any
 
 import jwt
@@ -7,6 +9,8 @@ from fastapi.security import OAuth2PasswordBearer
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from auth_service.bloom.filter import BloomFilter
+from auth_service.core.config import get_settings
 from auth_service.core.redis import get_redis
 from auth_service.core.security import decode_access_token
 from auth_service.db.models import User
@@ -57,3 +61,16 @@ async def get_current_user(payload: TokenPayloadDep, session: SessionDep) -> Use
 
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
+
+
+@lru_cache
+def _load_filter(path: str) -> BloomFilter | None:
+    file = Path(path)
+    return BloomFilter.load(file) if file.exists() else None
+
+
+def get_password_filter() -> BloomFilter | None:
+    return _load_filter(get_settings().leaked_passwords_filter_path)
+
+
+PasswordFilterDep = Annotated[BloomFilter | None, Depends(get_password_filter)]

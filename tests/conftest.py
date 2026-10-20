@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from auth_service.api.deps import get_password_filter
 from auth_service.core.config import get_settings
 from auth_service.core.redis import get_redis
 from auth_service.db import models  # noqa: F401
@@ -59,6 +60,7 @@ async def client(engine: AsyncEngine, redis_client: Redis) -> AsyncIterator[Asyn
 
     app.dependency_overrides[get_session] = override_get_session
     app.dependency_overrides[get_redis] = override_get_redis
+    app.dependency_overrides[get_password_filter] = lambda: None
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
