@@ -10,6 +10,9 @@ from argon2.exceptions import VerifyMismatchError
 from auth_service.core.config import get_settings
 
 _hasher = PasswordHasher()
+
+# Argon2 takes about 0.1 s of CPU and 64 MiB of memory per call. Run it in worker
+# threads so the event loop keeps serving requests, at most 4 at a time to cap memory.
 _hash_limiter = anyio.CapacityLimiter(4)
 
 

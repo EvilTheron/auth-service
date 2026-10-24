@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request, status
 
 from auth_service.api.deps import CurrentUserDep, RedisDep, SessionDep, TokenPayloadDep, client_info
+from auth_service.db.models import AuditEvent
 from auth_service.schemas.session import SessionRead
 from auth_service.services import audit_service, token_service
 
@@ -32,7 +33,7 @@ async def delete_session(
     ip, user_agent = client_info(request)
     await audit_service.record(
         session,
-        "session_revoked",
+        AuditEvent.SESSION_REVOKED,
         user_id=user.id,
         email=user.email,
         ip=ip,

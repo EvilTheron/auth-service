@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from auth_service.api.deps import AdminDep, RedisDep, SessionDep, client_info
-from auth_service.db.models import AuditLog, User
+from auth_service.db.models import AuditEvent, AuditLog, User
 from auth_service.schemas.audit import AuditRead
 from auth_service.schemas.user import AdminUserRead
 from auth_service.services import audit_service, token_service, user_service
@@ -46,7 +46,7 @@ async def deactivate_user(
     ip, user_agent = client_info(request)
     await audit_service.record(
         session,
-        "user_deactivated",
+        AuditEvent.USER_DEACTIVATED,
         user_id=user.id,
         email=user.email,
         ip=ip,
@@ -59,7 +59,7 @@ async def deactivate_user(
 async def read_audit(
     admin: AdminDep,
     session: SessionDep,
-    event: str | None = None,
+    event: AuditEvent | None = None,
     user_id: uuid.UUID | None = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,

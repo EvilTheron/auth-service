@@ -21,6 +21,14 @@ class RefreshTokenReuseError(InvalidRefreshTokenError):
         self.user_id = user_id
 
 
+def _session_key(session_id: str) -> str:
+    return f"session:{session_id}"
+
+
+def _user_sessions_key(user_id: uuid.UUID | str) -> str:
+    return f"user_sessions:{user_id}"
+
+
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -39,7 +47,7 @@ async def create_session(
     user_agent: str,
     ip: str,
 ) -> tuple[str, str]:
-    """Создаёт сессию, возвращает (session_id, refresh_token)."""
+    """Create a session and return (session_id, refresh_token)."""
     ttl = _refresh_ttl()
     session_id = uuid.uuid4().hex
     refresh_token = secrets.token_urlsafe(48)
@@ -47,7 +55,7 @@ async def create_session(
 
     async with redis.pipeline(transaction=True) as pipe:
         pipe.hset(
-            f"session:{session_id}",
+            _session_key(session_id),
             mapping={
                 "user_id": str(user_id),
                 "user_agent": user_agent,
@@ -56,24 +64,32 @@ async def create_session(
                 "last_used_at": now,
             },
         )
-        pipe.expire(f"session:{session_id}", ttl)
+        pipe.expire(_session_key(session_id), ttl)
         pipe.set(f"refresh:{hash_token(refresh_token)}", session_id, ex=ttl)
-        pipe.sadd(f"user_sessions:{user_id}", session_id)
-        pipe.expire(f"user_sessions:{user_id}", ttl)
+        pipe.sadd(_user_sessions_key(user_id), session_id)
+        pipe.expire(_user_sessions_key(user_id), ttl)
         await pipe.execute()
 
     return session_id, refresh_token
 
 
+async def is_session_active(redis: Redis, session_id: str) -> bool:
+    return bool(await redis.exists(_session_key(session_id)))
+
+
 async def revoke_session(redis: Redis, session_id: str) -> None:
-    raw_user_id = await redis.hget(f"session:{session_id}", "user_id")
+    raw_user_id = await redis.hget(_session_key(session_id), "user_id")
     async with redis.pipeline(transaction=True) as pipe:
-        pipe.delete(f"session:{session_id}")
+        pipe.delete(_session_key(session_id))
         if raw_user_id:
-            pipe.srem(f"user_sessions:{_text(raw_user_id)}", session_id)
+            pipe.srem(_user_sessions_key(_text(raw_user_id)), session_id)
         await pipe.execute()
 
 
+# Runs atomically inside Redis, so a concurrent logout cannot interleave.
+# KEYS: session, "used" marker of the old token, new refresh token, user's session set.
+# ARGV: ttl, session_id, timestamp.
+# Returns 1 on success, 0 if the old token was already used (theft), -1 if the session is gone.
 _ROTATE_SCRIPT = """
 if redis.call('EXISTS', KEYS[1]) == 0 then
     return -1
@@ -93,9 +109,9 @@ async def rotate_refresh_token(
     redis: Redis,
     refresh_token: str,
 ) -> tuple[uuid.UUID, str, str]:
-    """Проверяет refresh-токен и выдаёт новый.
+    """Validate a refresh token and replace it with a new one.
 
-    Возвращает (user_id, session_id, новый refresh-токен).
+    Returns (user_id, session_id, new_refresh_token).
     """
     ttl = _refresh_ttl()
     token_hash = hash_token(refresh_token)
@@ -105,7 +121,7 @@ async def rotate_refresh_token(
         raise InvalidRefreshTokenError
     session_id = _text(raw_session_id)
 
-    raw_user_id = await redis.hget(f"session:{session_id}", "user_id")
+    raw_user_id = await redis.hget(_session_key(session_id), "user_id")
     if raw_user_id is None:
         raise InvalidRefreshTokenError
     user_id = _text(raw_user_id)
@@ -114,10 +130,10 @@ async def rotate_refresh_token(
     result = await redis.eval(
         _ROTATE_SCRIPT,
         4,
-        f"session:{session_id}",
+        _session_key(session_id),
         f"used:{token_hash}",
         f"refresh:{hash_token(new_token)}",
-        f"user_sessions:{user_id}",
+        _user_sessions_key(user_id),
         ttl,
         session_id,
         datetime.now(UTC).isoformat(),
@@ -136,7 +152,7 @@ async def rotate_refresh_token(
 
 
 async def revoke_all_sessions(redis: Redis, user_id: uuid.UUID) -> None:
-    key = f"user_sessions:{user_id}"
+    key = _user_sessions_key(user_id)
     session_ids = await redis.smembers(key)
     async with redis.pipeline(transaction=True) as pipe:
         for raw_id in session_ids:
@@ -146,19 +162,19 @@ async def revoke_all_sessions(redis: Redis, user_id: uuid.UUID) -> None:
 
 
 async def revoke_other_sessions(redis: Redis, user_id: uuid.UUID, keep_session_id: str) -> None:
-    key = f"user_sessions:{user_id}"
+    key = _user_sessions_key(user_id)
     session_ids = await redis.smembers(key)
     async with redis.pipeline(transaction=True) as pipe:
         for raw_id in session_ids:
             session_id = _text(raw_id)
             if session_id != keep_session_id:
-                pipe.delete(f"session:{session_id}")
+                pipe.delete(_session_key(session_id))
                 pipe.srem(key, session_id)
         await pipe.execute()
 
 
 async def revoke_user_session(redis: Redis, user_id: uuid.UUID, session_id: str) -> bool:
-    owner = await redis.hget(f"session:{session_id}", "user_id")
+    owner = await redis.hget(_session_key(session_id), "user_id")
     if owner is None or _text(owner) != str(user_id):
         return False
     await revoke_session(redis, session_id)
@@ -166,11 +182,11 @@ async def revoke_user_session(redis: Redis, user_id: uuid.UUID, session_id: str)
 
 
 async def list_sessions(redis: Redis, user_id: uuid.UUID) -> list[dict[str, str]]:
-    key = f"user_sessions:{user_id}"
+    key = _user_sessions_key(user_id)
     sessions: list[dict[str, str]] = []
     for raw_id in await redis.smembers(key):
         session_id = _text(raw_id)
-        data = await redis.hgetall(f"session:{session_id}")
+        data = await redis.hgetall(_session_key(session_id))
         if not data:
             await redis.srem(key, session_id)
             continue

@@ -15,9 +15,9 @@ from auth_service.bloom.filter import BloomFilter
 from auth_service.core.config import get_settings
 from auth_service.core.redis import get_redis
 from auth_service.core.security import decode_access_token
-from auth_service.db.models import User
+from auth_service.db.models import Role, User
 from auth_service.db.session import get_session
-from auth_service.services import user_service
+from auth_service.services import token_service, user_service
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ async def get_token_payload(
     except jwt.InvalidTokenError as exc:
         raise _credentials_error() from exc
 
-    if not await redis.exists(f"session:{payload['sid']}"):
+    if not await token_service.is_session_active(redis, payload["sid"]):
         raise _credentials_error()
     return payload
 
@@ -87,7 +87,7 @@ def get_password_filter() -> BloomFilter | None:
 PasswordFilterDep = Annotated[BloomFilter | None, Depends(get_password_filter)]
 
 
-def require_role(*roles: str) -> Callable[..., Awaitable[User]]:
+def require_role(*roles: Role) -> Callable[..., Awaitable[User]]:
     async def checker(user: CurrentUserDep) -> User:
         if user.role not in roles:
             raise HTTPException(
@@ -99,7 +99,7 @@ def require_role(*roles: str) -> Callable[..., Awaitable[User]]:
     return checker
 
 
-AdminDep = Annotated[User, Depends(require_role("admin"))]
+AdminDep = Annotated[User, Depends(require_role(Role.ADMIN))]
 
 
 def client_info(request: Request) -> tuple[str, str]:

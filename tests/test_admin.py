@@ -3,6 +3,7 @@ import uuid
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from auth_service.db.models import Role
 from auth_service.services import user_service
 from tests.helpers import EMAIL, auth_headers, bearer, login, make_admin, refresh, register
 
@@ -59,7 +60,14 @@ async def test_deactivate_unknown_user(client: AsyncClient, engine: AsyncEngine)
 async def test_set_role_promotes_existing_user(client: AsyncClient, engine: AsyncEngine):
     await register(client)
     async with AsyncSession(engine, expire_on_commit=False) as session:
-        user = await user_service.set_role(session, EMAIL.upper(), "admin")
-        missing = await user_service.set_role(session, "nobody@example.com", "admin")
+        user = await user_service.set_role(session, EMAIL.upper(), Role.ADMIN)
+        missing = await user_service.set_role(session, "nobody@example.com", Role.ADMIN)
     assert user is not None and user.role == "admin"
     assert missing is None
+
+
+async def test_audit_rejects_unknown_event_filter(client: AsyncClient, engine: AsyncEngine):
+    headers = await auth_headers(client)
+    await make_admin(engine, EMAIL)
+    response = await client.get("/admin/audit", params={"event": "no_such_event"}, headers=headers)
+    assert response.status_code == 422

@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth_service.core.security import hash_password, hash_password_async, verify_password_async
-from auth_service.db.models import User
+from auth_service.db.models import Role, User
 
 _DUMMY_HASH = hash_password("dummy-password")
 
@@ -33,8 +33,8 @@ async def create_user(session: AsyncSession, email: str, password: str) -> User:
 
 async def authenticate(session: AsyncSession, email: str, password: str) -> User | None:
     user = await get_user_by_email(session, email)
-    # Завершаем читающую транзакцию, чтобы вернуть соединение в пул до медленной
-    # проверки пароля: иначе параллельные входы занимают все соединения с базой.
+    # Release the database connection before the slow password check, otherwise
+    # concurrent logins waiting for the hashing pool exhaust the connection pool.
     await session.commit()
     if user is None:
         await verify_password_async(password, _DUMMY_HASH)
@@ -60,7 +60,7 @@ async def change_password(session: AsyncSession, user: User, new_password: str) 
     await session.commit()
 
 
-async def set_role(session: AsyncSession, email: str, role: str) -> User | None:
+async def set_role(session: AsyncSession, email: str, role: Role) -> User | None:
     user = await get_user_by_email(session, email)
     if user is None:
         return None

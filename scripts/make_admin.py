@@ -1,19 +1,20 @@
 import asyncio
 import sys
 
+from auth_service.db.models import AuditEvent, Role
 from auth_service.db.session import SessionLocal, engine
 from auth_service.services import audit_service, user_service
 
 
 async def main(email: str) -> None:
     async with SessionLocal() as session:
-        user = await user_service.set_role(session, email, "admin")
+        user = await user_service.set_role(session, email, Role.ADMIN)
         if user is None:
             print("User not found")
         else:
             await audit_service.record(
                 session,
-                "role_changed",
+                AuditEvent.ROLE_CHANGED,
                 user_id=user.id,
                 email=user.email,
                 details="role set to admin by make_admin script",

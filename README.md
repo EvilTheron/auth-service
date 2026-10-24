@@ -13,7 +13,7 @@ A standalone authentication and session-management service built with FastAPI, P
 - Breached-password screening at registration and password change, with a warning at login, backed by a custom Bloom filter.
 - Role-based access control (`user`, `admin`), admin endpoints and an audit log.
 - Request logging with request IDs; passwords, tokens and emails are never logged.
-- Containerised, with CI running lint, strict type checks, migrations, tests and the image build.
+- Containerised with graceful shutdown; CI runs lint, strict type checks, migrations, tests and the image build.
 
 ## Tech stack
 
@@ -36,6 +36,8 @@ Routers handle only HTTP concerns (status codes, schemas); business logic lives 
 
 An access token carries the session ID (`sid`). On every request the service verifies the signature and expiry and checks that the session still exists in Redis, so logout, session revocation and theft detection invalidate access tokens immediately instead of after they expire.
 
+Refresh-token rotation runs as a single Lua script inside Redis. It checks that the session still exists, marks the old token as used and issues the new one in one atomic step, so a concurrent logout can never be undone by an in-flight refresh.
+
 ```mermaid
 sequenceDiagram
     participant C as Client
@@ -46,10 +48,10 @@ sequenceDiagram
     A-->>C: access token (sid) and refresh token T1
     C->>A: POST /auth/refresh with T1
     A->>R: look up session by SHA-256 of T1
-    A->>R: SET used:T1 NX
+    A->>R: atomic Lua script: mark T1 used, store T2, extend session
     A-->>C: access token and refresh token T2
     C->>A: POST /auth/refresh with T1 replayed
-    A->>R: used:T1 already set, theft suspected
+    A->>R: T1 already marked used, theft suspected
     A->>R: delete session
     A-->>C: 401, T2 and its access tokens are now invalid
 ```
@@ -64,6 +66,7 @@ sequenceDiagram
 | `user_sessions:{user_id}` | Set of the user's session IDs |
 | `login:fail:ip:*`, `login:fail:acct:*` | Failed-attempt counters |
 | `login:lock:*`, `login:known:*` | Account lockouts and recently used IPs |
+| `register:ip:*` | Registration counters per IP |
 
 All keys have a TTL, so expired data cleans itself up.
 
@@ -83,9 +86,9 @@ All keys have a TTL, so expired data cleans itself up.
 | `GET /admin/users` | List users (admin) |
 | `POST /admin/users/{id}/deactivate` | Deactivate a user and end their sessions (admin) |
 | `GET /admin/audit` | Query the audit log with filters (admin) |
-| `GET /health` | Liveness and database connectivity |
+| `GET /health` | Liveness check: database and Redis connectivity |
 
-Interactive documentation is served at `/docs`.
+Interactive documentation is served at `/docs` unless `DOCS_ENABLED=false`.
 
 ## Security model
 
@@ -97,6 +100,7 @@ Interactive documentation is served at `/docs`.
 | Weak or breached passwords | Bloom-filter screening at registration and password change; `password_compromised` flag at login |
 | Refresh token theft | Rotation with reuse detection: replaying a used token terminates the whole session |
 | Access token theft | Short lifetime and a per-request session liveness check |
+| Race between refresh and logout | Rotation is one atomic Lua script, so a revoked session cannot be recreated |
 | Token leakage via caches | Token responses carry `Cache-Control: no-store` |
 | Account enumeration | Identical responses and equalised timing for unknown email and wrong password |
 | Token forgery | Signature verification, explicit algorithm allow-list, required claims |
@@ -209,7 +213,7 @@ uv run uvicorn auth_service.main:app --reload --no-access-log
 
 ## Testing and quality
 
-The test suite (60+ tests, pytest and httpx) runs against a separate PostgreSQL database and Redis database 1, so development data is never touched. Create the test database once:
+The test suite (80+ tests, pytest and httpx) runs against a separate PostgreSQL database and Redis database 1, so development data is never touched. Create the test database once:
 
 ```bash
 docker compose exec postgres psql -U auth -d auth_service -c "create database auth_service_test;"
@@ -246,4 +250,6 @@ tests/            # automated tests
 
 - No email verification and no second factor (TOTP).
 - Sessions have no absolute lifetime: each refresh extends them.
+- Deactivated users cannot be reactivated through the API.
+- Every rotation leaves two small Redis keys (`refresh:` and `used:`) until the refresh TTL expires. At very large scale, tracking a per-session token generation would keep memory constant.
 - Tokens are signed with a shared secret (HS256). Other services currently need the key and Redis access to validate tokens; a token introspection endpoint or asymmetric signing (RS256 with JWKS) is the natural next step.

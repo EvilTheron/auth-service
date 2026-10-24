@@ -1,10 +1,16 @@
 import uuid
 from datetime import datetime
+from enum import StrEnum
 
 from sqlalchemy import CheckConstraint, DateTime, String, func, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from auth_service.db.base import Base
+
+
+class Role(StrEnum):
+    USER = "user"
+    ADMIN = "admin"
 
 
 class User(Base):

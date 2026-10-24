@@ -1,10 +1,24 @@
 import uuid
 from datetime import datetime
+from enum import StrEnum
 
 from sqlalchemy import BigInteger, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from auth_service.db.base import Base
+
+
+class AuditEvent(StrEnum):
+    REGISTER = "register"
+    LOGIN_SUCCESS = "login_success"
+    LOGIN_FAILED = "login_failed"
+    REFRESH_REUSE = "refresh_reuse"
+    LOGOUT = "logout"
+    LOGOUT_ALL = "logout_all"
+    SESSION_REVOKED = "session_revoked"
+    PASSWORD_CHANGED = "password_changed"
+    USER_DEACTIVATED = "user_deactivated"
+    ROLE_CHANGED = "role_changed"
 
 
 class AuditLog(Base):

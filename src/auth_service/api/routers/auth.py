@@ -13,7 +13,7 @@ from auth_service.api.deps import (
     client_info,
 )
 from auth_service.core.security import create_access_token, verify_password_async
-from auth_service.db.models import User
+from auth_service.db.models import AuditEvent, User
 from auth_service.schemas.token import RefreshRequest, Token
 from auth_service.schemas.user import PasswordChange, UserCreate, UserRead
 from auth_service.services import audit_service, throttle_service, token_service, user_service
@@ -22,6 +22,37 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 MAX_EMAIL_LENGTH = 254
 MAX_PASSWORD_LENGTH = 128
+
+
+def _bad_credentials() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Incorrect email or password",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _invalid_refresh_token() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid refresh token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _too_many_attempts(exc: throttle_service.TooManyAttemptsError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail="Too many attempts. Try again later.",
+        headers={"Retry-After": str(exc.retry_after)},
+    )
+
+
+def _breached_password() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="This password has appeared in known data breaches. Choose a different one.",
+    )
 
 
 def _no_store(response: Response) -> None:
@@ -41,17 +72,10 @@ async def register(
     try:
         await throttle_service.check_registration_allowed(redis, ip)
     except throttle_service.TooManyAttemptsError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many registration attempts. Try again later.",
-            headers={"Retry-After": str(exc.retry_after)},
-        ) from exc
+        raise _too_many_attempts(exc) from exc
 
     if password_filter is not None and data.password in password_filter:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This password has appeared in known data breaches. Choose a different one.",
-        )
+        raise _breached_password()
     try:
         user = await user_service.create_user(session, data.email, data.password)
     except user_service.EmailAlreadyRegisteredError as exc:
@@ -61,7 +85,12 @@ async def register(
         ) from exc
 
     await audit_service.record(
-        session, "register", user_id=user.id, email=user.email, ip=ip, user_agent=user_agent
+        session,
+        AuditEvent.REGISTER,
+        user_id=user.id,
+        email=user.email,
+        ip=ip,
+        user_agent=user_agent,
     )
     return user
 
@@ -79,33 +108,21 @@ async def login(
     ip, user_agent = client_info(request)
 
     if len(email) > MAX_EMAIL_LENGTH or len(form.password) > MAX_PASSWORD_LENGTH:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise _bad_credentials()
 
     try:
         await throttle_service.check_login_allowed(redis, email, ip)
     except throttle_service.TooManyAttemptsError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many login attempts. Try again later.",
-            headers={"Retry-After": str(exc.retry_after)},
-        ) from exc
+        raise _too_many_attempts(exc) from exc
 
     user = await user_service.authenticate(session, email, form.password)
     if user is None:
         await throttle_service.register_failure(redis, email, ip)
         await audit_service.record(
-            session, "login_failed", email=email, ip=ip, user_agent=user_agent
+            session, AuditEvent.LOGIN_FAILED, email=email, ip=ip, user_agent=user_agent
         )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    _no_store(response)
+        raise _bad_credentials()
+
     compromised = password_filter is not None and form.password in password_filter
     await throttle_service.register_success(redis, email, ip)
     session_id, refresh_token = await token_service.create_session(
@@ -113,25 +130,18 @@ async def login(
     )
     await audit_service.record(
         session,
-        "login_success",
+        AuditEvent.LOGIN_SUCCESS,
         user_id=user.id,
         email=email,
         ip=ip,
         user_agent=user_agent,
         details="password found in breach list" if compromised else None,
     )
+    _no_store(response)
     return Token(
         access_token=create_access_token(user.id, session_id),
         refresh_token=refresh_token,
         password_compromised=compromised,
-    )
-
-
-def _invalid_refresh_error() -> HTTPException:
-    return HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid refresh token",
-        headers={"WWW-Authenticate": "Bearer"},
     )
 
 
@@ -150,16 +160,16 @@ async def refresh(
     except token_service.RefreshTokenReuseError as exc:
         ip, user_agent = client_info(request)
         await audit_service.record(
-            session, "refresh_reuse", user_id=exc.user_id, ip=ip, user_agent=user_agent
+            session, AuditEvent.REFRESH_REUSE, user_id=exc.user_id, ip=ip, user_agent=user_agent
         )
-        raise _invalid_refresh_error() from exc
+        raise _invalid_refresh_token() from exc
     except token_service.InvalidRefreshTokenError as exc:
-        raise _invalid_refresh_error() from exc
+        raise _invalid_refresh_token() from exc
 
     user = await user_service.get_user_by_id(session, user_id)
     if user is None or not user.is_active:
         await token_service.revoke_session(redis, session_id)
-        raise _invalid_refresh_error()
+        raise _invalid_refresh_token()
 
     _no_store(response)
     return Token(
@@ -178,7 +188,11 @@ async def logout(
     await token_service.revoke_session(redis, payload["sid"])
     ip, user_agent = client_info(request)
     await audit_service.record(
-        session, "logout", user_id=uuid.UUID(payload["sub"]), ip=ip, user_agent=user_agent
+        session,
+        AuditEvent.LOGOUT,
+        user_id=uuid.UUID(payload["sub"]),
+        ip=ip,
+        user_agent=user_agent,
     )
 
 
@@ -192,7 +206,12 @@ async def logout_all(
     await token_service.revoke_all_sessions(redis, user.id)
     ip, user_agent = client_info(request)
     await audit_service.record(
-        session, "logout_all", user_id=user.id, email=user.email, ip=ip, user_agent=user_agent
+        session,
+        AuditEvent.LOGOUT_ALL,
+        user_id=user.id,
+        email=user.email,
+        ip=ip,
+        user_agent=user_agent,
     )
 
 
@@ -207,15 +226,10 @@ async def change_password(
     password_filter: PasswordFilterDep,
 ) -> None:
     ip, user_agent = client_info(request)
-
     try:
         await throttle_service.check_login_allowed(redis, user.email, ip)
     except throttle_service.TooManyAttemptsError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many attempts. Try again later.",
-            headers={"Retry-After": str(exc.retry_after)},
-        ) from exc
+        raise _too_many_attempts(exc) from exc
 
     if not await verify_password_async(data.current_password, user.password_hash):
         await throttle_service.register_failure(redis, user.email, ip)
@@ -229,16 +243,13 @@ async def change_password(
             detail="New password must differ from the current one",
         )
     if password_filter is not None and data.new_password in password_filter:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This password has appeared in known data breaches. Choose a different one.",
-        )
+        raise _breached_password()
 
     await user_service.change_password(session, user, data.new_password)
     await token_service.revoke_other_sessions(redis, user.id, payload["sid"])
     await audit_service.record(
         session,
-        "password_changed",
+        AuditEvent.PASSWORD_CHANGED,
         user_id=user.id,
         email=user.email,
         ip=ip,

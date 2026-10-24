@@ -3,12 +3,12 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth_service.db.models import AuditLog
+from auth_service.db.models import AuditEvent, AuditLog
 
 
 async def record(
     session: AsyncSession,
-    event: str,
+    event: AuditEvent,
     *,
     user_id: uuid.UUID | None = None,
     email: str | None = None,
@@ -32,7 +32,7 @@ async def record(
 async def list_events(
     session: AsyncSession,
     *,
-    event: str | None,
+    event: AuditEvent | None,
     user_id: uuid.UUID | None,
     limit: int,
     offset: int,

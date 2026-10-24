@@ -25,7 +25,7 @@ def main(n: int = 500_000, p: float = 0.01) -> None:
 
     set_bytes = sys.getsizeof(words) + sum(sys.getsizeof(w) for w in words)
     print(f"Items: {len(words)}, target false positive rate: {p}")
-    print(f"Bloom filter: {len(bloom._bits) / 1024 / 1024:.2f} MiB, {bloom.num_hashes} hashes")
+    print(f"Bloom filter: {bloom.size_bytes / 1024 / 1024:.2f} MiB, {bloom.num_hashes} hashes")
     print(f"Python set:   {set_bytes / 1024 / 1024:.2f} MiB")
     print(f"Measured false positive rate: {false_positives / len(probes):.4f}")
     print(f"Lookup time: {elapsed / len(probes) * 1e6:.1f} microseconds per item")

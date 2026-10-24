@@ -69,6 +69,7 @@ async def test_known_ip_can_login_while_account_is_locked(client: AsyncClient):
 
     assert (await login(client)).status_code == 200
 
+
 async def test_registration_is_rate_limited_per_ip(client: AsyncClient):
     for i in range(10):
         response = await register(client, email=f"user{i}@example.com")

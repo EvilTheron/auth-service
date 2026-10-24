@@ -65,7 +65,7 @@ async def test_refresh_does_not_resurrect_session_revoked_during_rotation(
     async def hget_then_logout(name: str, key: str) -> str | None:
         value = await original_hget(name, key)
         if name == session_key:
-            await redis_client.delete(session_key)  # logout успел между шагами ротации
+            await redis_client.delete(session_key)  # logout lands between rotation steps
         return value
 
     redis_client.hget = hget_then_logout  # type: ignore[assignment, method-assign]

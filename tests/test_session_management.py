@@ -89,7 +89,7 @@ async def test_access_token_stops_working_after_reuse_detection(client: AsyncCli
     first = (await login(client)).json()
     second = (await refresh(client, first["refresh_token"])).json()
 
-    await refresh(client, first["refresh_token"])  # повтор старого токена: сессия убита
+    await refresh(client, first["refresh_token"])  # replaying the old token kills the session
 
     response = await client.get("/users/me", headers=bearer(second["access_token"]))
     assert response.status_code == 401
@@ -103,7 +103,7 @@ async def test_list_sessions_cleans_up_expired_entries(client: AsyncClient, redi
     sessions = (await client.get("/sessions", headers=headers)).json()
     other = next(s for s in sessions if not s["current"])
 
-    await redis_client.delete(f"session:{other['id']}")  # имитируем истёкшую сессию
+    await redis_client.delete(f"session:{other['id']}")  # simulate an expired session
 
     response = await client.get("/sessions", headers=headers)
     assert [s["current"] for s in response.json()] == [True]

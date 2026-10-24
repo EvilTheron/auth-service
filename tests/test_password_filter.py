@@ -32,7 +32,7 @@ def test_get_password_filter_uses_configured_path(tmp_path: Path, monkeypatch: p
 def test_truncated_filter_file_is_rejected(tmp_path: Path):
     path = tmp_path / "broken.bloom"
     make_filter("password123").save(path)
-    path.write_bytes(path.read_bytes()[:-5])  # файл обрезан, например при копировании
+    path.write_bytes(path.read_bytes()[:-5])  # e.g. truncated while copying
 
     with pytest.raises(ValueError, match="corrupted"):
         BloomFilter.load(path)

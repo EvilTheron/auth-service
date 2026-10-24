@@ -13,6 +13,10 @@ class BloomFilter:
         self.num_hashes = max(1, round(self.size_bits / expected_items * math.log(2)))
         self._bits = bytearray((self.size_bits + 7) // 8)
 
+    @property
+    def size_bytes(self) -> int:
+        return len(self._bits)
+
     def _positions(self, item: str) -> list[int]:
         digest = hashlib.blake2b(item.encode(), digest_size=16).digest()
         h1 = int.from_bytes(digest[:8], "big")

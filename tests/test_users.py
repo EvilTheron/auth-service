@@ -40,7 +40,7 @@ async def test_inactive_user_is_rejected_even_with_live_session(
 ):
     await register(client)
     tokens = (await login(client)).json()
-    await set_inactive(engine, EMAIL)  # сессии не трогаем, они остаются живыми
+    await set_inactive(engine, EMAIL)  # sessions are left alive on purpose
 
     me = await client.get("/users/me", headers=bearer(tokens["access_token"]))
     assert me.status_code == 401
