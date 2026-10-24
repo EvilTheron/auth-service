@@ -1,8 +1,8 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 
-from auth_service.api.deps import CurrentUserDep, RedisDep, TokenPayloadDep
+from auth_service.api.deps import CurrentUserDep, RedisDep, SessionDep, TokenPayloadDep, client_info
 from auth_service.schemas.session import SessionRead
-from auth_service.services import token_service
+from auth_service.services import audit_service, token_service
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -18,7 +18,24 @@ async def list_my_sessions(
 
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_session(session_id: str, user: CurrentUserDep, redis: RedisDep) -> None:
+async def delete_session(
+    session_id: str,
+    request: Request,
+    user: CurrentUserDep,
+    session: SessionDep,
+    redis: RedisDep,
+) -> None:
     revoked = await token_service.revoke_user_session(redis, user.id, session_id)
     if not revoked:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    ip, user_agent = client_info(request)
+    await audit_service.record(
+        session,
+        "session_revoked",
+        user_id=user.id,
+        email=user.email,
+        ip=ip,
+        user_agent=user_agent,
+        details=f"session {session_id}",
+    )

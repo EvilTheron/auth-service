@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 from auth_service.api.deps import (
@@ -22,6 +22,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 MAX_EMAIL_LENGTH = 254
 MAX_PASSWORD_LENGTH = 128
+
+
+def _no_store(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
@@ -64,6 +69,7 @@ async def register(
 @router.post("/login", response_model=Token)
 async def login(
     request: Request,
+    response: Response,
     form: Annotated[OAuth2PasswordRequestForm, Depends()],
     session: SessionDep,
     redis: RedisDep,
@@ -99,7 +105,7 @@ async def login(
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
+    _no_store(response)
     compromised = password_filter is not None and form.password in password_filter
     await throttle_service.register_success(redis, email, ip)
     session_id, refresh_token = await token_service.create_session(
@@ -132,6 +138,7 @@ def _invalid_refresh_error() -> HTTPException:
 @router.post("/refresh", response_model=Token)
 async def refresh(
     request: Request,
+    response: Response,
     data: RefreshRequest,
     session: SessionDep,
     redis: RedisDep,
@@ -154,6 +161,7 @@ async def refresh(
         await token_service.revoke_session(redis, session_id)
         raise _invalid_refresh_error()
 
+    _no_store(response)
     return Token(
         access_token=create_access_token(user.id, session_id),
         refresh_token=new_refresh_token,

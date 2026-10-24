@@ -79,3 +79,16 @@ async def test_audit_can_be_filtered_by_user(client: AsyncClient, engine: AsyncE
     events = response.json()
     assert events
     assert all(e["user_id"] == me["id"] for e in events)
+
+
+async def test_session_revocation_is_audited(client: AsyncClient, engine: AsyncEngine):
+    headers = await auth_headers(client)
+    await make_admin(engine, EMAIL)
+    await login(client)
+    sessions = (await client.get("/sessions", headers=headers)).json()
+    other = next(s for s in sessions if not s["current"])
+    await client.delete(f"/sessions/{other['id']}", headers=headers)
+
+    events = await get_events(client, headers, "session_revoked")
+    assert len(events) == 1
+    assert other["id"] in events[0]["details"]

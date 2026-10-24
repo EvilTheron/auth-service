@@ -97,6 +97,7 @@ Interactive documentation is served at `/docs`.
 | Weak or breached passwords | Bloom-filter screening at registration and password change; `password_compromised` flag at login |
 | Refresh token theft | Rotation with reuse detection: replaying a used token terminates the whole session |
 | Access token theft | Short lifetime and a per-request session liveness check |
+| Token leakage via caches | Token responses carry `Cache-Control: no-store` |
 | Account enumeration | Identical responses and equalised timing for unknown email and wrong password |
 | Token forgery | Signature verification, explicit algorithm allow-list, required claims |
 | Lockout abuse (denial of service) | Lockouts do not apply to IPs the owner has successfully logged in from in the last 30 days |
@@ -105,7 +106,7 @@ Interactive documentation is served at `/docs`.
 | Secrets in logs | Passwords, tokens and emails are not logged; covered by a test |
 | Audit log flooding | Blocked login attempts are not written to the audit log |
 
-Audited events: `register`, `login_success`, `login_failed`, `refresh_reuse`, `logout`, `logout_all`, `password_changed`, `user_deactivated`.
+Audited events: `register`, `login_success`, `login_failed`, `refresh_reuse`, `logout`, `logout_all`, `session_revoked`, `password_changed`, `user_deactivated`, `role_changed`.
 
 ## Breached-password screening
 

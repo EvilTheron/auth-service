@@ -58,3 +58,12 @@ async def list_users(session: AsyncSession, *, limit: int, offset: int) -> list[
 async def change_password(session: AsyncSession, user: User, new_password: str) -> None:
     user.password_hash = await hash_password_async(new_password)
     await session.commit()
+
+
+async def set_role(session: AsyncSession, email: str, role: str) -> User | None:
+    user = await get_user_by_email(session, email)
+    if user is None:
+        return None
+    user.role = role
+    await session.commit()
+    return user

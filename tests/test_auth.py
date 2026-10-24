@@ -68,3 +68,14 @@ async def test_login_ignores_spaces_and_case_in_email(client: AsyncClient):
     await register(client)
     response = await login(client, email=f"  {EMAIL.upper()}  ")
     assert response.status_code == 200
+
+
+async def test_token_responses_are_not_cached(client: AsyncClient):
+    await register(client)
+    login_response = await login(client)
+    assert login_response.headers["Cache-Control"] == "no-store"
+
+    refreshed = await client.post(
+        "/auth/refresh", json={"refresh_token": login_response.json()["refresh_token"]}
+    )
+    assert refreshed.headers["Cache-Control"] == "no-store"

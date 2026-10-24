@@ -1,19 +1,24 @@
 import asyncio
 import sys
 
-from sqlalchemy import update
-
-from auth_service.db.models import User
 from auth_service.db.session import SessionLocal, engine
+from auth_service.services import audit_service, user_service
 
 
 async def main(email: str) -> None:
     async with SessionLocal() as session:
-        result = await session.execute(
-            update(User).where(User.email == email.lower()).values(role="admin")
-        )
-        await session.commit()
-        print("Done" if result.rowcount else "User not found")
+        user = await user_service.set_role(session, email, "admin")
+        if user is None:
+            print("User not found")
+        else:
+            await audit_service.record(
+                session,
+                "role_changed",
+                user_id=user.id,
+                email=user.email,
+                details="role set to admin by make_admin script",
+            )
+            print("Done")
     await engine.dispose()
 
 
