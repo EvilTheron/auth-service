@@ -12,7 +12,7 @@ from auth_service.api.deps import (
     TokenPayloadDep,
     client_info,
 )
-from auth_service.core.security import create_access_token, verify_password
+from auth_service.core.security import create_access_token, verify_password_async
 from auth_service.db.models import User
 from auth_service.schemas.token import RefreshRequest, Token
 from auth_service.schemas.user import PasswordChange, UserCreate, UserRead
@@ -29,8 +29,19 @@ async def register(
     request: Request,
     data: UserCreate,
     session: SessionDep,
+    redis: RedisDep,
     password_filter: PasswordFilterDep,
 ) -> User:
+    ip, user_agent = client_info(request)
+    try:
+        await throttle_service.check_registration_allowed(redis, ip)
+    except throttle_service.TooManyAttemptsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many registration attempts. Try again later.",
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from exc
+
     if password_filter is not None and data.password in password_filter:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -44,7 +55,6 @@ async def register(
             detail="Email already registered",
         ) from exc
 
-    ip, user_agent = client_info(request)
     await audit_service.record(
         session, "register", user_id=user.id, email=user.email, ip=ip, user_agent=user_agent
     )
@@ -199,7 +209,7 @@ async def change_password(
             headers={"Retry-After": str(exc.retry_after)},
         ) from exc
 
-    if not verify_password(data.current_password, user.password_hash):
+    if not await verify_password_async(data.current_password, user.password_hash):
         await throttle_service.register_failure(redis, user.email, ip)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -2,7 +2,12 @@ import pytest
 from pydantic import ValidationError
 
 from auth_service.core.config import Settings
-from auth_service.core.security import hash_password, verify_password
+from auth_service.core.security import (
+    hash_password,
+    hash_password_async,
+    verify_password,
+    verify_password_async,
+)
 
 
 def test_hash_is_not_plain_and_verifies():
@@ -24,3 +29,9 @@ def test_weak_jwt_secret_is_rejected():
             postgres_db="d",
             jwt_secret="short",
         )
+
+
+async def test_async_hashing_works_in_threads():
+    password_hash = await hash_password_async("secret-password")
+    assert await verify_password_async("secret-password", password_hash)
+    assert not await verify_password_async("other-password", password_hash)

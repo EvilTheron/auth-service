@@ -11,6 +11,9 @@ LOCK_BASE_SECONDS = 30
 LOCK_MAX_SECONDS = 60 * 60
 KNOWN_IP_TTL_SECONDS = 30 * 24 * 60 * 60
 
+REGISTRATION_LIMIT = 10
+REGISTRATION_WINDOW_SECONDS = 60 * 60
+
 logger = logging.getLogger(__name__)
 
 
@@ -55,3 +58,13 @@ async def register_success(redis: Redis, email: str, ip: str) -> None:
         pipe.delete(f"login:fail:acct:{email}", f"login:lock:{email}")
         pipe.set(f"login:known:{email}:{ip}", "1", ex=KNOWN_IP_TTL_SECONDS)
         await pipe.execute()
+
+
+async def check_registration_allowed(redis: Redis, ip: str) -> None:
+    key = f"register:ip:{ip}"
+    async with redis.pipeline(transaction=True) as pipe:
+        pipe.incr(key)
+        pipe.expire(key, REGISTRATION_WINDOW_SECONDS, nx=True)
+        attempts, _ = await pipe.execute()
+    if attempts > REGISTRATION_LIMIT:
+        raise TooManyAttemptsError(max(await redis.ttl(key), 1))
