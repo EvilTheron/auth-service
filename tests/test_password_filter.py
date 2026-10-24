@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from auth_service.api.deps import _load_filter, get_password_filter
+from auth_service.bloom.filter import BloomFilter
 from auth_service.core.config import get_settings
 from tests.helpers import make_filter
 
@@ -26,3 +27,13 @@ def test_get_password_filter_uses_configured_path(tmp_path: Path, monkeypatch: p
     bloom = get_password_filter()
     assert bloom is not None
     assert "hunter2" in bloom
+
+
+def test_truncated_filter_file_is_rejected(tmp_path: Path):
+    path = tmp_path / "broken.bloom"
+    make_filter("password123").save(path)
+    path.write_bytes(path.read_bytes()[:-5])  # файл обрезан, например при копировании
+
+    with pytest.raises(ValueError, match="corrupted"):
+        BloomFilter.load(path)
+    assert _load_filter(str(path)) is None

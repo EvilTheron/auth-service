@@ -35,5 +35,9 @@ class BloomFilter:
         header, bits = Path(path).read_bytes().split(b"\n", 1)
         expected_items, false_positive_rate = header.decode().split(",")
         bloom = cls(int(expected_items), float(false_positive_rate))
+        if len(bits) != len(bloom._bits):
+            raise ValueError(
+                f"corrupted Bloom filter file: expected {len(bloom._bits)} bytes, got {len(bits)}"
+            )
         bloom._bits = bytearray(bits)
         return bloom

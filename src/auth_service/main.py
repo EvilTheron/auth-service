@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from fastapi import FastAPI, HTTPException, Request, Response
 from sqlalchemy import text
 
-from auth_service.api.deps import SessionDep
+from auth_service.api.deps import RedisDep, SessionDep
 from auth_service.api.routers import admin, auth, sessions, users
 from auth_service.core.config import get_settings
 from auth_service.core.logging import configure_logging, request_id_var
@@ -50,10 +50,15 @@ async def log_requests(
 
 
 @app.get("/health")
-async def health(session: SessionDep) -> dict[str, str]:
+async def health(session: SessionDep, redis: RedisDep) -> dict[str, str]:
     try:
         await session.execute(text("SELECT 1"))
     except Exception as exc:
         logger.exception("database health check failed")
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    try:
+        await redis.ping()
+    except Exception as exc:
+        logger.exception("redis health check failed")
+        raise HTTPException(status_code=503, detail="Redis unavailable") from exc
     return {"status": "ok"}

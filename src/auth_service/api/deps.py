@@ -73,7 +73,11 @@ def _load_filter(path: str) -> BloomFilter | None:
     if not file.exists():
         logger.warning("leaked password filter not found at %s: check is disabled", path)
         return None
-    return BloomFilter.load(file)
+    try:
+        return BloomFilter.load(file)
+    except OSError, ValueError:
+        logger.exception("leaked password filter at %s is unreadable: check is disabled", path)
+        return None
 
 
 def get_password_filter() -> BloomFilter | None:
