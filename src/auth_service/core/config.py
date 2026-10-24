@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     redis_host: str = "127.0.0.1"
     redis_port: int = 6379
+    redis_password: SecretStr | None = None
 
     jwt_secret: SecretStr
     jwt_algorithm: str = "HS256"
@@ -25,6 +26,11 @@ class Settings(BaseSettings):
     leaked_passwords_filter_path: str = "data/leaked_passwords.bloom"
 
     log_level: str = "INFO"
+    docs_enabled: bool = True
+
+    @property
+    def redis_password_value(self) -> str | None:
+        return self.redis_password.get_secret_value() if self.redis_password else None
 
     @property
     def database_url(self) -> URL:

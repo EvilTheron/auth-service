@@ -101,7 +101,8 @@ Interactive documentation is served at `/docs`.
 | Account enumeration | Identical responses and equalised timing for unknown email and wrong password |
 | Token forgery | Signature verification, explicit algorithm allow-list, required claims |
 | Lockout abuse (denial of service) | Lockouts do not apply to IPs the owner has successfully logged in from in the last 30 days |
-| Privilege escalation | Role read from the database on every request, never from the token; admins can only be created by a server-side script; foreign session IDs return 404 |
+| Privilege escalation | Role read from the database on every request, never from the token; admins can only be created by a server-side script; the database rejects unknown roles; foreign session IDs return 404 |
+| Unauthorised Redis access | Redis requires a password and is reachable only from the Docker network and localhost |
 | Weak signing key | The service refuses to start if `JWT_SECRET` is shorter than 32 characters |
 | Secrets in logs | Passwords, tokens and emails are not logged; covered by a test |
 | Audit log flooding | Blocked login attempts are not written to the audit log |
@@ -142,7 +143,7 @@ cd auth-service
 cp .env.example .env          # PowerShell: Copy-Item .env.example .env
 ```
 
-Edit `.env`: set a database password and generate a signing key (at least 32 characters):
+Edit `.env`: set the database and Redis passwords and generate a signing key (at least 32 characters):
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(48))"
@@ -185,12 +186,14 @@ Settings are read from environment variables (or `.env`).
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | required | Database credentials |
 | `POSTGRES_HOST`, `POSTGRES_PORT` | `127.0.0.1`, `5432` | Database address |
 | `REDIS_HOST`, `REDIS_PORT` | `127.0.0.1`, `6379` | Redis address |
+| `REDIS_PASSWORD` | none | Redis password (required by Docker Compose) |
 | `JWT_SECRET` | required | Signing key, at least 32 characters |
 | `JWT_ALGORITHM` | `HS256` | Signing algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Access token lifetime |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `30` | Refresh token and session lifetime |
 | `LEAKED_PASSWORDS_FILTER_PATH` | `data/leaked_passwords.bloom` | Bloom filter file |
 | `LOG_LEVEL` | `INFO` | Log level |
+| `DOCS_ENABLED` | `true` | Serve `/docs` and `/openapi.json`; disable in production |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Reverse proxy addresses trusted to set `X-Forwarded-For` |
 
 ## Development

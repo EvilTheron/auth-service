@@ -39,6 +39,7 @@ async def redis_client() -> AsyncIterator[Redis]:
     test_redis = Redis(
         host=settings.redis_host,
         port=settings.redis_port,
+        password=settings.redis_password_value,
         db=1,
         decode_responses=True,
     )
