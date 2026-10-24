@@ -1,3 +1,4 @@
+import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -9,21 +10,20 @@ from auth_service.api.deps import (
     RedisDep,
     SessionDep,
     TokenPayloadDep,
+    client_info,
 )
 from auth_service.core.security import create_access_token
 from auth_service.db.models import User
 from auth_service.schemas.token import RefreshRequest, Token
 from auth_service.schemas.user import UserCreate, UserRead
-from auth_service.services import throttle_service, token_service, user_service
-
-router = APIRouter(prefix="/auth", tags=["auth"])
-
+from auth_service.services import audit_service, throttle_service, token_service, user_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def register(
+    request: Request,
     data: UserCreate,
     session: SessionDep,
     password_filter: PasswordFilterDep,
@@ -34,12 +34,18 @@ async def register(
             detail="This password has appeared in known data breaches. Choose a different one.",
         )
     try:
-        return await user_service.create_user(session, data.email, data.password)
+        user = await user_service.create_user(session, data.email, data.password)
     except user_service.EmailAlreadyRegisteredError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered",
         ) from exc
+
+    ip, user_agent = client_info(request)
+    await audit_service.record(
+        session, "register", user_id=user.id, email=user.email, ip=ip, user_agent=user_agent
+    )
+    return user
 
 
 @router.post("/login", response_model=Token)
@@ -50,7 +56,7 @@ async def login(
     redis: RedisDep,
 ) -> Token:
     email = form.username.lower()
-    ip = request.client.host if request.client else "unknown"
+    ip, user_agent = client_info(request)
 
     try:
         await throttle_service.check_login_allowed(redis, email, ip)
@@ -64,6 +70,9 @@ async def login(
     user = await user_service.authenticate(session, email, form.password)
     if user is None:
         await throttle_service.register_failure(redis, email, ip)
+        await audit_service.record(
+            session, "login_failed", email=email, ip=ip, user_agent=user_agent
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -72,10 +81,10 @@ async def login(
 
     await throttle_service.register_success(redis, email, ip)
     session_id, refresh_token = await token_service.create_session(
-        redis,
-        user.id,
-        user_agent=request.headers.get("user-agent", ""),
-        ip=ip,
+        redis, user.id, user_agent=user_agent, ip=ip
+    )
+    await audit_service.record(
+        session, "login_success", user_id=user.id, email=email, ip=ip, user_agent=user_agent
     )
     return Token(
         access_token=create_access_token(user.id, session_id),
@@ -92,11 +101,22 @@ def _invalid_refresh_error() -> HTTPException:
 
 
 @router.post("/refresh", response_model=Token)
-async def refresh(data: RefreshRequest, session: SessionDep, redis: RedisDep) -> Token:
+async def refresh(
+    request: Request,
+    data: RefreshRequest,
+    session: SessionDep,
+    redis: RedisDep,
+) -> Token:
     try:
         user_id, session_id, new_refresh_token = await token_service.rotate_refresh_token(
             redis, data.refresh_token
         )
+    except token_service.RefreshTokenReuseError as exc:
+        ip, user_agent = client_info(request)
+        await audit_service.record(
+            session, "refresh_reuse", user_id=exc.user_id, ip=ip, user_agent=user_agent
+        )
+        raise _invalid_refresh_error() from exc
     except token_service.InvalidRefreshTokenError as exc:
         raise _invalid_refresh_error() from exc
 
@@ -112,10 +132,28 @@ async def refresh(data: RefreshRequest, session: SessionDep, redis: RedisDep) ->
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(payload: TokenPayloadDep, redis: RedisDep) -> None:
+async def logout(
+    request: Request,
+    payload: TokenPayloadDep,
+    session: SessionDep,
+    redis: RedisDep,
+) -> None:
     await token_service.revoke_session(redis, payload["sid"])
+    ip, user_agent = client_info(request)
+    await audit_service.record(
+        session, "logout", user_id=uuid.UUID(payload["sub"]), ip=ip, user_agent=user_agent
+    )
 
 
 @router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
-async def logout_all(user: CurrentUserDep, redis: RedisDep) -> None:
+async def logout_all(
+    request: Request,
+    user: CurrentUserDep,
+    session: SessionDep,
+    redis: RedisDep,
+) -> None:
     await token_service.revoke_all_sessions(redis, user.id)
+    ip, user_agent = client_info(request)
+    await audit_service.record(
+        session, "logout_all", user_id=user.id, email=user.email, ip=ip, user_agent=user_agent
+    )

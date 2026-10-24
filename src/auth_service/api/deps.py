@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -89,3 +89,8 @@ def require_role(*roles: str):
 
 
 AdminDep = Annotated[User, Depends(require_role("admin"))]
+
+
+def client_info(request: Request) -> tuple[str, str]:
+    ip = request.client.host if request.client else "unknown"
+    return ip, request.headers.get("user-agent", "")

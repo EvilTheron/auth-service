@@ -1,4 +1,8 @@
 from httpx import AsyncClient, Response
+from sqlalchemy import update
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+
+from auth_service.db.models import User
 
 EMAIL = "user@example.com"
 PASSWORD = "correct-horse-battery"
@@ -24,3 +28,9 @@ async def refresh(client: AsyncClient, refresh_token: str) -> Response:
 
 def bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+async def make_admin(engine: AsyncEngine, email: str) -> None:
+    async with AsyncSession(engine) as session:
+        await session.execute(update(User).where(User.email == email).values(role="admin"))
+        await session.commit()

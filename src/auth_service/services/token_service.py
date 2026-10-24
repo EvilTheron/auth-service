@@ -13,7 +13,9 @@ class InvalidRefreshTokenError(Exception):
 
 
 class RefreshTokenReuseError(InvalidRefreshTokenError):
-    pass
+    def __init__(self, user_id: uuid.UUID) -> None:
+        super().__init__("Refresh token reuse detected")
+        self.user_id = user_id
 
 
 def hash_token(token: str) -> str:
@@ -83,7 +85,7 @@ async def rotate_refresh_token(
     first_use = await redis.set(f"used:{token_hash}", "1", nx=True, ex=ttl)
     if not first_use:
         await revoke_session(redis, session_id)
-        raise RefreshTokenReuseError
+        raise RefreshTokenReuseError(uuid.UUID(session["user_id"]))
 
     new_token = secrets.token_urlsafe(48)
     user_id = session["user_id"]

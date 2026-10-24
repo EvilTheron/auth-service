@@ -60,13 +60,11 @@ def client_from_ip(ip: str) -> AsyncClient:
 
 async def test_known_ip_can_login_while_account_is_locked(client: AsyncClient):
     await register(client)
-    assert (await login(client)).status_code == 200  # IP теста становится знакомым
+    assert (await login(client)).status_code == 200
 
     async with client_from_ip("203.0.113.7") as attacker:
         for _ in range(5):
             await login(attacker, password="wrong-password")
-        # чужой IP заблокирован, даже если пароль верный
         assert (await login(attacker)).status_code == 429
 
-    # а владелец со знакомого IP входит
     assert (await login(client)).status_code == 200

@@ -1,15 +1,7 @@
 from httpx import AsyncClient
-from sqlalchemy import update
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-from auth_service.db.models import User
-from tests.helpers import EMAIL, auth_headers, bearer, login, refresh, register
-
-
-async def make_admin(engine: AsyncEngine, email: str) -> None:
-    async with AsyncSession(engine) as session:
-        await session.execute(update(User).where(User.email == email).values(role="admin"))
-        await session.commit()
+from tests.helpers import EMAIL, auth_headers, bearer, login, make_admin, refresh, register
 
 
 async def test_admin_endpoint_requires_token(client: AsyncClient):
