@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import secrets
 import uuid
 from datetime import UTC, datetime
@@ -6,6 +7,8 @@ from datetime import UTC, datetime
 from redis.asyncio import Redis
 
 from auth_service.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class InvalidRefreshTokenError(Exception):
@@ -95,6 +98,11 @@ async def rotate_refresh_token(
     first_use = await redis.set(f"used:{token_hash}", "1", nx=True, ex=ttl)
     if not first_use:
         await revoke_session(redis, session_id)
+        logger.warning(
+            "refresh token reuse detected: user_id=%s session_id=%s",
+            session["user_id"],
+            session_id,
+        )
         raise RefreshTokenReuseError(uuid.UUID(session["user_id"]))
 
     new_token = secrets.token_urlsafe(48)

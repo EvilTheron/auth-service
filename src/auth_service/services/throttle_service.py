@@ -1,3 +1,5 @@
+import logging
+
 from redis.asyncio import Redis
 
 IP_MAX_FAILURES = 20
@@ -8,6 +10,8 @@ ACCOUNT_COUNTER_TTL = 60 * 60
 LOCK_BASE_SECONDS = 30
 LOCK_MAX_SECONDS = 60 * 60
 KNOWN_IP_TTL_SECONDS = 30 * 24 * 60 * 60
+
+logger = logging.getLogger(__name__)
 
 
 class TooManyAttemptsError(Exception):
@@ -41,6 +45,9 @@ async def register_failure(redis: Redis, email: str, ip: str) -> None:
         exponent = min(account_failures - ACCOUNT_FREE_ATTEMPTS, 10)
         lock_seconds = min(LOCK_BASE_SECONDS * 2**exponent, LOCK_MAX_SECONDS)
         await redis.set(f"login:lock:{email}", "1", ex=lock_seconds)
+        logger.warning(
+            "account locked: failures=%d lock_seconds=%d ip=%s", account_failures, lock_seconds, ip
+        )
 
 
 async def register_success(redis: Redis, email: str, ip: str) -> None:

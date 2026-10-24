@@ -24,6 +24,8 @@ class Settings(BaseSettings):
 
     leaked_passwords_filter_path: str = "data/leaked_passwords.bloom"
 
+    log_level: str = "INFO"
+
     @property
     def database_url(self) -> URL:
         return URL.create(

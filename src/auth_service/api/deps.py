@@ -1,3 +1,4 @@
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from functools import lru_cache
@@ -17,6 +18,8 @@ from auth_service.core.security import decode_access_token
 from auth_service.db.models import User
 from auth_service.db.session import get_session
 from auth_service.services import user_service
+
+logger = logging.getLogger(__name__)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
@@ -67,7 +70,10 @@ CurrentUserDep = Annotated[User, Depends(get_current_user)]
 @lru_cache
 def _load_filter(path: str) -> BloomFilter | None:
     file = Path(path)
-    return BloomFilter.load(file) if file.exists() else None
+    if not file.exists():
+        logger.warning("leaked password filter not found at %s: check is disabled", path)
+        return None
+    return BloomFilter.load(file)
 
 
 def get_password_filter() -> BloomFilter | None:
