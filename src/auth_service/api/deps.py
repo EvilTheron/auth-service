@@ -74,3 +74,18 @@ def get_password_filter() -> BloomFilter | None:
 
 
 PasswordFilterDep = Annotated[BloomFilter | None, Depends(get_password_filter)]
+
+
+def require_role(*roles: str):
+    async def checker(user: CurrentUserDep) -> User:
+        if user.role not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions",
+            )
+        return user
+
+    return checker
+
+
+AdminDep = Annotated[User, Depends(require_role("admin"))]
