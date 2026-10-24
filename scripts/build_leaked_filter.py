@@ -14,9 +14,8 @@ def main(source: str, target: str, false_positive_rate: float = 0.001) -> None:
 
     Path(target).parent.mkdir(parents=True, exist_ok=True)
     bloom.save(target)
-    print(
-        f"{len(passwords)} passwords, {bloom.size_bits / 8 / 1024:.0f} KiB, {bloom.num_hashes} hashes"
-    )
+    size_kib = bloom.size_bits / 8 / 1024
+    print(f"{len(passwords)} passwords, {size_kib:.0f} KiB, {bloom.num_hashes} hashes")
 
 
 if __name__ == "__main__":
