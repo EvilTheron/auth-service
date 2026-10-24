@@ -1,16 +1,8 @@
 from httpx import AsyncClient
 
 from auth_service.api.deps import get_password_filter
-from auth_service.bloom.filter import BloomFilter
 from auth_service.main import app
-from tests.helpers import register
-
-
-def make_filter(*passwords: str) -> BloomFilter:
-    bloom = BloomFilter(expected_items=10, false_positive_rate=0.001)
-    for password in passwords:
-        bloom.add(password)
-    return bloom
+from tests.helpers import make_filter, register
 
 
 async def test_register_rejects_leaked_password(client: AsyncClient):

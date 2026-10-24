@@ -50,3 +50,8 @@ async def list_users(session: AsyncSession, *, limit: int, offset: int) -> list[
         select(User).order_by(User.created_at).limit(limit).offset(offset)
     )
     return list(result.scalars())
+
+
+async def change_password(session: AsyncSession, user: User, new_password: str) -> None:
+    user.password_hash = hash_password(new_password)
+    await session.commit()

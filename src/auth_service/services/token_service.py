@@ -127,3 +127,14 @@ async def list_sessions(redis: Redis, user_id: uuid.UUID) -> list[dict[str, str]
             continue
         sessions.append({"id": session_id, **data})
     return sorted(sessions, key=lambda s: s["created_at"], reverse=True)
+
+
+async def revoke_other_sessions(redis: Redis, user_id: uuid.UUID, keep_session_id: str) -> None:
+    key = f"user_sessions:{user_id}"
+    session_ids = await redis.smembers(key)
+    async with redis.pipeline(transaction=True) as pipe:
+        for session_id in session_ids:
+            if session_id != keep_session_id:
+                pipe.delete(f"session:{session_id}")
+                pipe.srem(key, session_id)
+        await pipe.execute()
