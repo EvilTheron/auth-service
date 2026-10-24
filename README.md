@@ -93,6 +93,7 @@ Interactive documentation is served at `/docs`.
 |---|---|
 | Database leak | Passwords stored as argon2id hashes; refresh tokens stored in Redis only as SHA-256 hashes |
 | Password guessing | Per-IP limit (20 failures per 15 minutes); per-account lockout after 5 failures, 30 s doubling up to 1 hour; checked before password hashing so lockouts do not consume CPU |
+| Registration abuse | At most 10 registrations per IP per hour; password hashing runs in a bounded thread pool so it cannot stall other requests |
 | Weak or breached passwords | Bloom-filter screening at registration and password change; `password_compromised` flag at login |
 | Refresh token theft | Rotation with reuse detection: replaying a used token terminates the whole session |
 | Access token theft | Short lifetime and a per-request session liveness check |
@@ -127,6 +128,7 @@ A filter built from about one million common passwords at a 0.1% error rate take
 - **Strict reuse detection.** Two concurrent refresh requests with the same token are treated as theft. A short grace window would soften this for flaky clients.
 - **`409` on duplicate registration** reveals that an email is registered. Email verification would remove the leak.
 - **No Bloom filter for email lookups at login.** Considered and rejected: the saving over an indexed database lookup is negligible, and a desynchronised filter would wrongly reject real users.
+- **Client IP behind a reverse proxy.** Throttling and known-IP checks depend on the real client address. Set `FORWARDED_ALLOW_IPS` to the proxy address; otherwise every client appears as the proxy, so a few failed logins block everyone and account lockouts stop applying.
 - **Migrations run at container start.** Convenient for a single instance; a multi-instance deployment should run them as a separate job.
 
 ## Getting started
@@ -188,6 +190,7 @@ Settings are read from environment variables (or `.env`).
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `30` | Refresh token and session lifetime |
 | `LEAKED_PASSWORDS_FILTER_PATH` | `data/leaked_passwords.bloom` | Bloom filter file |
 | `LOG_LEVEL` | `INFO` | Log level |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Reverse proxy addresses trusted to set `X-Forwarded-For` |
 
 ## Development
 
@@ -238,7 +241,5 @@ tests/            # automated tests
 ## Limitations and roadmap
 
 - No email verification and no second factor (TOTP).
-- Registration is not rate limited.
-- Behind a reverse proxy, configure trusted forwarding headers (`--proxy-headers`, `--forwarded-allow-ips` in uvicorn); otherwise all clients appear to share one IP.
 - Sessions have no absolute lifetime: each refresh extends them.
 - Tokens are signed with a shared secret (HS256). Other services currently need the key and Redis access to validate tokens; a token introspection endpoint or asymmetric signing (RS256 with JWKS) is the natural next step.
