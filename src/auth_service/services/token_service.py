@@ -74,6 +74,21 @@ async def revoke_session(redis: Redis, session_id: str) -> None:
         await pipe.execute()
 
 
+_ROTATE_SCRIPT = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+    return -1
+end
+if not redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[1]) then
+    return 0
+end
+redis.call('SET', KEYS[3], ARGV[2], 'EX', ARGV[1])
+redis.call('HSET', KEYS[1], 'last_used_at', ARGV[3])
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+redis.call('EXPIRE', KEYS[4], ARGV[1])
+return 1
+"""
+
+
 async def rotate_refresh_token(
     redis: Redis,
     refresh_token: str,
@@ -90,29 +105,32 @@ async def rotate_refresh_token(
         raise InvalidRefreshTokenError
     session_id = _text(raw_session_id)
 
-    raw_session = await redis.hgetall(f"session:{session_id}")
-    if not raw_session:
+    raw_user_id = await redis.hget(f"session:{session_id}", "user_id")
+    if raw_user_id is None:
         raise InvalidRefreshTokenError
-    session = {_text(key): _text(value) for key, value in raw_session.items()}
-
-    first_use = await redis.set(f"used:{token_hash}", "1", nx=True, ex=ttl)
-    if not first_use:
-        await revoke_session(redis, session_id)
-        logger.warning(
-            "refresh token reuse detected: user_id=%s session_id=%s",
-            session["user_id"],
-            session_id,
-        )
-        raise RefreshTokenReuseError(uuid.UUID(session["user_id"]))
+    user_id = _text(raw_user_id)
 
     new_token = secrets.token_urlsafe(48)
-    user_id = session["user_id"]
-    async with redis.pipeline(transaction=True) as pipe:
-        pipe.set(f"refresh:{hash_token(new_token)}", session_id, ex=ttl)
-        pipe.hset(f"session:{session_id}", "last_used_at", datetime.now(UTC).isoformat())
-        pipe.expire(f"session:{session_id}", ttl)
-        pipe.expire(f"user_sessions:{user_id}", ttl)
-        await pipe.execute()
+    result = await redis.eval(
+        _ROTATE_SCRIPT,
+        4,
+        f"session:{session_id}",
+        f"used:{token_hash}",
+        f"refresh:{hash_token(new_token)}",
+        f"user_sessions:{user_id}",
+        ttl,
+        session_id,
+        datetime.now(UTC).isoformat(),
+    )
+
+    if int(result) == -1:
+        raise InvalidRefreshTokenError
+    if int(result) == 0:
+        await revoke_session(redis, session_id)
+        logger.warning(
+            "refresh token reuse detected: user_id=%s session_id=%s", user_id, session_id
+        )
+        raise RefreshTokenReuseError(uuid.UUID(user_id))
 
     return uuid.UUID(user_id), session_id, new_token
 

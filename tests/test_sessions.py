@@ -2,7 +2,7 @@ from httpx import AsyncClient
 from redis.asyncio import Redis
 
 from auth_service.services.token_service import hash_token
-from tests.helpers import login, refresh, register
+from tests.helpers import bearer, login, refresh, register
 
 
 async def test_login_creates_session_in_redis(client: AsyncClient, redis_client: Redis):
@@ -50,3 +50,29 @@ async def test_refresh_reuse_revokes_whole_session(client: AsyncClient):
 
     after = await refresh(client, second["refresh_token"])
     assert after.status_code == 401
+
+
+async def test_refresh_does_not_resurrect_session_revoked_during_rotation(
+    client: AsyncClient, redis_client: Redis
+):
+    await register(client)
+    tokens = (await login(client)).json()
+    sessions = (await client.get("/sessions", headers=bearer(tokens["access_token"]))).json()
+    session_key = f"session:{sessions[0]['id']}"
+
+    original_hget = redis_client.hget
+
+    async def hget_then_logout(name: str, key: str) -> str | None:
+        value = await original_hget(name, key)
+        if name == session_key:
+            await redis_client.delete(session_key)  # logout успел между шагами ротации
+        return value
+
+    redis_client.hget = hget_then_logout  # type: ignore[assignment, method-assign]
+    response = await refresh(client, tokens["refresh_token"])
+    redis_client.hget = original_hget  # type: ignore[method-assign]
+
+    assert response.status_code == 401
+    assert await redis_client.exists(session_key) == 0
+    me = await client.get("/users/me", headers=bearer(tokens["access_token"]))
+    assert me.status_code == 401
