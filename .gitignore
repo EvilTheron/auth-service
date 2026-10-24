@@ -11,3 +11,6 @@ wheels/
 .idea/
 .env
 data/
+
+.coverage
+htmlcov/

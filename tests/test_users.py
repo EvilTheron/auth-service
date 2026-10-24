@@ -1,8 +1,11 @@
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from auth_service.core.config import get_settings
-from tests.helpers import EMAIL, auth_headers, login, register
+from tests.helpers import EMAIL, auth_headers, bearer, login, refresh, register, set_inactive
+
+pytestmark = pytest.mark.asyncio
 
 
 async def test_me_success(client: AsyncClient):
@@ -30,3 +33,15 @@ async def test_me_expired_token(client: AsyncClient, monkeypatch: pytest.MonkeyP
     token = (await login(client)).json()["access_token"]
     response = await client.get("/users/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401
+
+
+async def test_inactive_user_is_rejected_even_with_live_session(
+    client: AsyncClient, engine: AsyncEngine
+):
+    await register(client)
+    tokens = (await login(client)).json()
+    await set_inactive(engine, EMAIL)  # сессии не трогаем, они остаются живыми
+
+    me = await client.get("/users/me", headers=bearer(tokens["access_token"]))
+    assert me.status_code == 401
+    assert (await refresh(client, tokens["refresh_token"])).status_code == 401

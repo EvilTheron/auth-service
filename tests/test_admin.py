@@ -1,3 +1,5 @@
+import uuid
+
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -36,3 +38,18 @@ async def test_deactivate_user_revokes_access(client: AsyncClient, engine: Async
     assert response.status_code == 204
     assert (await client.get("/users/me", headers=bearer(bob["access_token"]))).status_code == 401
     assert (await refresh(client, bob["refresh_token"])).status_code == 401
+
+
+async def test_admin_cannot_deactivate_self(client: AsyncClient, engine: AsyncEngine):
+    headers = await auth_headers(client)
+    await make_admin(engine, EMAIL)
+    me = (await client.get("/users/me", headers=headers)).json()
+    response = await client.post(f"/admin/users/{me['id']}/deactivate", headers=headers)
+    assert response.status_code == 400
+
+
+async def test_deactivate_unknown_user(client: AsyncClient, engine: AsyncEngine):
+    headers = await auth_headers(client)
+    await make_admin(engine, EMAIL)
+    response = await client.post(f"/admin/users/{uuid.uuid4()}/deactivate", headers=headers)
+    assert response.status_code == 404

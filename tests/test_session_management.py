@@ -1,4 +1,5 @@
 from httpx import AsyncClient
+from redis.asyncio import Redis
 
 from tests.helpers import bearer, login, refresh, register
 
@@ -92,3 +93,17 @@ async def test_access_token_stops_working_after_reuse_detection(client: AsyncCli
 
     response = await client.get("/users/me", headers=bearer(second["access_token"]))
     assert response.status_code == 401
+
+
+async def test_list_sessions_cleans_up_expired_entries(client: AsyncClient, redis_client: Redis):
+    await register(client)
+    first = (await login(client)).json()
+    await login(client)
+    headers = bearer(first["access_token"])
+    sessions = (await client.get("/sessions", headers=headers)).json()
+    other = next(s for s in sessions if not s["current"])
+
+    await redis_client.delete(f"session:{other['id']}")  # имитируем истёкшую сессию
+
+    response = await client.get("/sessions", headers=headers)
+    assert [s["current"] for s in response.json()] == [True]

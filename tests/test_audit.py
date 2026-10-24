@@ -66,3 +66,16 @@ async def test_blocked_attempts_do_not_flood_the_audit_log(
 
     events = await get_events(client, headers, "login_failed")
     assert len(events) == 5
+
+
+async def test_audit_can_be_filtered_by_user(client: AsyncClient, engine: AsyncEngine):
+    headers = await auth_headers(client)
+    await make_admin(engine, EMAIL)
+    me = (await client.get("/users/me", headers=headers)).json()
+    await register(client, email="bob@example.com")
+
+    response = await client.get("/admin/audit", params={"user_id": me["id"]}, headers=headers)
+    assert response.status_code == 200
+    events = response.json()
+    assert events
+    assert all(e["user_id"] == me["id"] for e in events)

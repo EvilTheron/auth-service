@@ -37,6 +37,12 @@ async def make_admin(engine: AsyncEngine, email: str) -> None:
         await session.commit()
 
 
+async def set_inactive(engine: AsyncEngine, email: str) -> None:
+    async with AsyncSession(engine) as session:
+        await session.execute(update(User).where(User.email == email).values(is_active=False))
+        await session.commit()
+
+
 def make_filter(*passwords: str) -> BloomFilter:
     bloom = BloomFilter(expected_items=10, false_positive_rate=0.001)
     for password in passwords:
