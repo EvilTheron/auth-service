@@ -71,3 +71,6 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -v --cov
+
+      - name: Build Docker image
+        run: docker build -t auth-service .

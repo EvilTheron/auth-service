@@ -1,0 +1,15 @@
+.git
+.github
+.venv
+.idea
+.env
+data
+docs
+tests
+__pycache__
+*.pyc
+.coverage
+htmlcov
+.mypy_cache
+.ruff_cache
+.pytest_cache
