@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Awaitable, Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
@@ -76,7 +77,7 @@ def get_password_filter() -> BloomFilter | None:
 PasswordFilterDep = Annotated[BloomFilter | None, Depends(get_password_filter)]
 
 
-def require_role(*roles: str):
+def require_role(*roles: str) -> Callable[..., Awaitable[User]]:
     async def checker(user: CurrentUserDep) -> User:
         if user.role not in roles:
             raise HTTPException(
