@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: auth
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: auth_service
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U auth -d auth_service"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    env:
+      POSTGRES_USER: auth
+      POSTGRES_PASSWORD: ci_password
+      POSTGRES_DB: auth_service
+      POSTGRES_HOST: localhost
+      REDIS_HOST: localhost
+      JWT_SECRET: ci-only-throwaway-secret-0123456789abcdef0123456789abcdef
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      - name: Check that migrations apply to an empty database
+        run: uv run alembic upgrade head
+
+      - name: Create test database
+        run: PGPASSWORD=ci_password psql -h localhost -U auth -d auth_service -c "create database auth_service_test;"
+
+      - name: Run tests
+        run: uv run pytest -v
