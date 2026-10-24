@@ -20,10 +20,10 @@ async def record(
         AuditLog(
             event=event,
             user_id=user_id,
-            email=email,
-            ip=ip,
+            email=email[:255] if email else None,
+            ip=ip[:45] if ip else None,
             user_agent=user_agent[:255] if user_agent else None,
-            details=details,
+            details=details[:255] if details else None,
         )
     )
     await session.commit()

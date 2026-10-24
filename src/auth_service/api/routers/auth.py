@@ -20,6 +20,9 @@ from auth_service.services import audit_service, throttle_service, token_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+MAX_EMAIL_LENGTH = 254
+MAX_PASSWORD_LENGTH = 128
+
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def register(
@@ -56,8 +59,15 @@ async def login(
     redis: RedisDep,
     password_filter: PasswordFilterDep,
 ) -> Token:
-    email = form.username.lower()
+    email = form.username.strip().lower()
     ip, user_agent = client_info(request)
+
+    if len(email) > MAX_EMAIL_LENGTH or len(form.password) > MAX_PASSWORD_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     try:
         await throttle_service.check_login_allowed(redis, email, ip)
