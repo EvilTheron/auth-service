@@ -13,7 +13,7 @@ A standalone authentication and session-management service built with FastAPI, P
 - Breached-password screening at registration and password change, with a warning at login, backed by a custom Bloom filter.
 - Role-based access control (`user`, `admin`), admin endpoints and an audit log.
 - Request logging with request IDs; passwords, tokens and emails are never logged.
-- Containerised with graceful shutdown; CI runs lint, strict type checks, migrations, tests and the image build.
+- Containerised with graceful shutdown; CI runs lint, strict type checks, migrations, tests and the image build; tagged releases are tested and published to GitHub Container Registry.
 
 ## Tech stack
 
@@ -241,6 +241,21 @@ uv run pytest --cov
 ```
 
 CI also applies all migrations to an empty database and builds the Docker image.
+
+## Releases
+
+Pushing a version tag runs the full CI pipeline and, if it passes, publishes the image to GitHub Container Registry:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The image is tagged `1.0.0`, `1.0` and `latest`:
+
+```bash
+docker pull ghcr.io/eviltheron/auth-service:1.0.0
+```
 
 ## Project layout
 
