@@ -87,7 +87,7 @@ All keys have a TTL, so expired data cleans itself up.
 | `GET /admin/users` | List users (admin) |
 | `POST /admin/users/{id}/deactivate` | Deactivate a user and end their sessions (admin) |
 | `GET /admin/audit` | Query the audit log with filters (admin) |
-| `GET /health` | Liveness check: database and Redis connectivity |
+| `GET /health` | Liveness check: database and Redis connectivity; reports the running version |
 
 Interactive documentation is served at `/docs` unless `DOCS_ENABLED=false`.
 
@@ -193,6 +193,7 @@ Settings are read from environment variables (or `.env`).
 |---|---|---|
 | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | required | Database credentials |
 | `POSTGRES_HOST`, `POSTGRES_PORT` | `127.0.0.1`, `5432` | Database address |
+| `POSTGRES_SSL_MODE` | `disable` | `require` encrypts the connection; `verify-full` also checks the certificate and host name against the system CA store (use for managed databases) |
 | `REDIS_HOST`, `REDIS_PORT` | `127.0.0.1`, `6379` | Redis address |
 | `REDIS_PASSWORD` | none | Redis password (required by Docker Compose) |
 | `JWT_SECRET` | required | Signing key, at least 32 characters |
@@ -203,6 +204,7 @@ Settings are read from environment variables (or `.env`).
 | `COOKIE_SECURE` | `true` | Mark the refresh cookie `Secure` (HTTPS only); set to `false` only for local development over plain HTTP |
 | `LEAKED_PASSWORDS_FILTER_PATH` | `data/leaked_passwords.bloom` | Bloom filter file |
 | `LOG_LEVEL` | `INFO` | Log level |
+| `APP_VERSION` | `dev` | Reported by `/health`; set from the Git tag when release images are built |
 | `DOCS_ENABLED` | `true` | Serve `/docs` and `/openapi.json`; disable in production |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Reverse proxy addresses trusted to set `X-Forwarded-For` |
 | `LOGIN_IP_MAX_FAILURES`, `LOGIN_IP_WINDOW_SECONDS` | `20`, `900` | Per-IP failed-login limit and window |
@@ -256,6 +258,32 @@ The image is tagged `1.0.0`, `1.0` and `latest`:
 ```bash
 docker pull ghcr.io/eviltheron/auth-service:1.0.0
 ```
+
+## Deployment
+
+The release workflow deploys every tagged image automatically:
+
+```mermaid
+flowchart LR
+    tag[git push tag v1.2.0] --> ci[CI: lint, types, migrations, tests]
+    ci --> publish[Build and push image to GHCR]
+    publish --> hook[Render deploy hook]
+    hook --> verify[Poll /health until version 1.2.0 is live]
+```
+
+The reference deployment runs on free tiers: the image on a Render web service, PostgreSQL on Neon, and Redis as a Render Key Value instance. Settings that differ from local development:
+
+| Variable | Value |
+|---|---|
+| `POSTGRES_HOST`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | Neon direct (non-pooled) endpoint; asyncpg prepared statements do not work through a transaction-mode pooler |
+| `POSTGRES_SSL_MODE` | `verify-full` |
+| `REDIS_HOST`, `REDIS_PORT` | Internal address of the Key Value instance, created with the `noeviction` memory policy so sessions are never evicted |
+| `COOKIE_SECURE`, `DOCS_ENABLED` | `true`, `false` |
+| `FORWARDED_ALLOW_IPS` | The platform's internal proxy network as a CIDR range. Never `*`: Uvicorn then takes the left-most `X-Forwarded-For` entry, which the client controls, and per-IP limits could be bypassed by sending a fake header |
+
+GitHub configuration for the deploy job: secret `RENDER_DEPLOY_HOOK_URL` and variable `PUBLIC_URL`. Without the secret the job is skipped.
+
+Free-tier trade-offs: the web service sleeps after 15 minutes without traffic, so the first request takes about a minute; the free Key Value instance keeps data in memory only, so a restart ends all sessions and resets throttling counters.
 
 ## Project layout
 

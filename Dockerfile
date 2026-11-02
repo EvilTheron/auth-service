@@ -21,7 +21,9 @@ RUN uv sync --locked --no-dev
 RUN useradd --create-home appuser
 USER appuser
 
-ENV PATH="/app/.venv/bin:$PATH"
+ARG APP_VERSION=dev
+ENV PATH="/app/.venv/bin:$PATH" \
+    APP_VERSION=$APP_VERSION
 EXPOSE 8000
 
 CMD ["sh", "-c", "alembic upgrade head && exec uvicorn auth_service.main:app --host 0.0.0.0 --port 8000 --no-access-log"]

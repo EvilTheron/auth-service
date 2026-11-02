@@ -1,4 +1,6 @@
+import ssl
 from functools import lru_cache
+from typing import Any, Literal
 
 from pydantic import NonNegativeInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,6 +15,7 @@ class Settings(BaseSettings):
     postgres_db: str
     postgres_host: str = "127.0.0.1"
     postgres_port: int = 5432
+    postgres_ssl_mode: Literal["disable", "require", "verify-full"] = "disable"
 
     redis_host: str = "127.0.0.1"
     redis_port: int = 6379
@@ -35,6 +38,7 @@ class Settings(BaseSettings):
     login_known_ip_max_failures: int = 5
     registration_limit_per_hour: int = 10
 
+    app_version: str = "dev"
     log_level: str = "INFO"
     docs_enabled: bool = True
 
@@ -52,6 +56,15 @@ class Settings(BaseSettings):
             port=self.postgres_port,
             database=self.postgres_db,
         )
+
+    @property
+    def database_connect_args(self) -> dict[str, Any]:
+        if self.postgres_ssl_mode == "disable":
+            return {}
+        if self.postgres_ssl_mode == "require":
+            return {"ssl": "require"}
+        # Verify the certificate chain and host name against the system CA store.
+        return {"ssl": ssl.create_default_context()}
 
     @field_validator("jwt_secret")
     @classmethod

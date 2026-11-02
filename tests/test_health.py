@@ -13,7 +13,7 @@ from auth_service.main import app, create_app
 async def test_health_ok(client: AsyncClient):
     response = await client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "version": get_settings().app_version}
 
 
 async def test_health_reports_database_failure(client: AsyncClient):

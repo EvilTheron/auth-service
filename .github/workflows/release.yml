@@ -47,5 +47,43 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: APP_VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    needs: publish
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PUBLIC_URL }}
+    env:
+      DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+      VERSION: ${{ github.ref_name }}
+
+    steps:
+      - name: Trigger deploy on Render
+        run: |
+          if [ -z "$DEPLOY_HOOK" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL is not set, skipping deployment"
+            exit 0
+          fi
+          curl -fsS -o /dev/null -X POST --get "$DEPLOY_HOOK" \
+            --data-urlencode "imgURL=ghcr.io/eviltheron/auth-service:${VERSION#v}"
+
+      - name: Wait until the new version is live
+        if: env.DEPLOY_HOOK != '' && env.PUBLIC_URL != ''
+        run: |
+          expected="${VERSION#v}"
+          for _ in $(seq 1 40); do
+            live=$(curl -fsS "$PUBLIC_URL/health" | jq -r .version || true)
+            if [ "$live" = "$expected" ]; then
+              echo "Version $expected is live"
+              exit 0
+            fi
+            echo "Live version: ${live:-unavailable}, waiting for $expected"
+            sleep 15
+          done
+          echo "Version $expected did not go live within 10 minutes"
+          exit 1

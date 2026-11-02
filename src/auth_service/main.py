@@ -66,7 +66,7 @@ async def health(session: SessionDep, redis: RedisDep) -> dict[str, str]:
     except Exception as exc:
         logger.exception("redis health check failed")
         raise HTTPException(status_code=503, detail="Redis unavailable") from exc
-    return {"status": "ok"}
+    return {"status": "ok", "version": get_settings().app_version}
 
 
 def create_app(settings: Settings) -> FastAPI:
