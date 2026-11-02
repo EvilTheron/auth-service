@@ -88,20 +88,32 @@ async def revoke_session(redis: Redis, session_id: str) -> None:
 
 # Runs atomically inside Redis, so a concurrent logout cannot interleave.
 # KEYS: session, "used" marker of the old token, new refresh token, user's session set.
-# ARGV: ttl, session_id, timestamp.
-# Returns 1 on success, 0 if the old token was already used (theft), -1 if the session is gone.
+# ARGV: ttl, session_id, timestamp, reuse grace period in seconds.
+# The "used" marker holds the Unix time of the first use. A repeat within the grace
+# period is treated as a client retry, any later repeat as theft.
+# Returns 1 on success, 2 on a retry within the grace period,
+# 0 if the old token was already used (theft), -1 if the session is gone.
 _ROTATE_SCRIPT = """
 if redis.call('EXISTS', KEYS[1]) == 0 then
     return -1
 end
-if not redis.call('SET', KEYS[2], '1', 'NX', 'EX', ARGV[1]) then
-    return 0
+local now = tonumber(redis.call('TIME')[1])
+local result = 1
+local used_at = tonumber(redis.call('GET', KEYS[2]))
+if used_at then
+    local grace = tonumber(ARGV[4])
+    if grace <= 0 or now - used_at > grace then
+        return 0
+    end
+    result = 2
+else
+    redis.call('SET', KEYS[2], now, 'EX', ARGV[1])
 end
 redis.call('SET', KEYS[3], ARGV[2], 'EX', ARGV[1])
 redis.call('HSET', KEYS[1], 'last_used_at', ARGV[3])
 redis.call('EXPIRE', KEYS[1], ARGV[1])
 redis.call('EXPIRE', KEYS[4], ARGV[1])
-return 1
+return result
 """
 
 
@@ -137,6 +149,7 @@ async def rotate_refresh_token(
         ttl,
         session_id,
         datetime.now(UTC).isoformat(),
+        get_settings().refresh_reuse_grace_seconds,
     )
 
     if int(result) == -1:
@@ -147,6 +160,8 @@ async def rotate_refresh_token(
             "refresh token reuse detected: user_id=%s session_id=%s", user_id, session_id
         )
         raise RefreshTokenReuseError(uuid.UUID(user_id))
+    if int(result) == 2:
+        logger.info("refresh token retried within grace period: session_id=%s", session_id)
 
     return uuid.UUID(user_id), session_id, new_token
 

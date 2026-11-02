@@ -1,6 +1,10 @@
+import time
+
+import pytest
 from httpx import AsyncClient
 from redis.asyncio import Redis
 
+from auth_service.core.config import Settings, get_settings
 from auth_service.services.token_service import hash_token
 from tests.helpers import bearer, login, refresh, register
 
@@ -76,3 +80,49 @@ async def test_refresh_does_not_resurrect_session_revoked_during_rotation(
     assert await redis_client.exists(session_key) == 0
     me = await client.get("/users/me", headers=bearer(tokens["access_token"]))
     assert me.status_code == 401
+
+
+async def test_used_marker_stores_time_of_first_use(client: AsyncClient, redis_client: Redis):
+    await register(client)
+    first = (await login(client)).json()
+    await refresh(client, first["refresh_token"])
+
+    used_at = int(await redis_client.get(f"used:{hash_token(first['refresh_token'])}"))
+    assert abs(used_at - time.time()) < 60
+
+
+async def test_retry_within_grace_period_is_accepted(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(get_settings(), "refresh_reuse_grace_seconds", 10)
+    await register(client)
+    first = (await login(client)).json()
+    second = (await refresh(client, first["refresh_token"])).json()
+
+    retry = await refresh(client, first["refresh_token"])
+    assert retry.status_code == 200
+    third = retry.json()
+
+    for tokens in (second, third):
+        me = await client.get("/users/me", headers=bearer(tokens["access_token"]))
+        assert me.status_code == 200
+    assert (await refresh(client, third["refresh_token"])).status_code == 200
+
+
+async def test_reuse_after_grace_period_revokes_session(
+    client: AsyncClient, redis_client: Redis, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(get_settings(), "refresh_reuse_grace_seconds", 10)
+    await register(client)
+    first = (await login(client)).json()
+    second = (await refresh(client, first["refresh_token"])).json()
+
+    used_key = f"used:{hash_token(first['refresh_token'])}"
+    await redis_client.set(used_key, int(time.time()) - 11, keepttl=True)
+
+    assert (await refresh(client, first["refresh_token"])).status_code == 401
+    assert (await refresh(client, second["refresh_token"])).status_code == 401
+
+
+def test_grace_period_is_off_by_default():
+    assert Settings.model_fields["refresh_reuse_grace_seconds"].default == 0

@@ -99,7 +99,7 @@ Interactive documentation is served at `/docs` unless `DOCS_ENABLED=false`.
 | Password guessing | Per-IP limit (20 failures per 15 minutes); per-account lockout after 5 failures, 30 s doubling up to 1 hour; checked before password hashing so lockouts do not consume CPU. All thresholds are configurable |
 | Registration abuse | At most 10 registrations per IP per hour; password hashing runs in a bounded thread pool so it cannot stall other requests |
 | Weak or breached passwords | Bloom-filter screening at registration and password change; `password_compromised` flag at login |
-| Refresh token theft | Rotation with reuse detection: replaying a used token terminates the whole session |
+| Refresh token theft | Rotation with reuse detection: replaying a used token terminates the whole session (after the optional grace period, off by default) |
 | Access token theft | Short lifetime and a per-request session liveness check |
 | Refresh token theft via XSS (browser clients) | Cookie delivery: `HttpOnly` (unreadable by scripts), `Secure`, `SameSite=Strict` (not sent cross-site, which also blocks CSRF), `Path=/auth`; the token is then never present in the response body |
 | Race between refresh and logout | Rotation is one atomic Lua script, so a revoked session cannot be recreated |
@@ -134,8 +134,8 @@ A filter built from about one million common passwords at a 0.1% error rate take
 
 - **Session-bound access tokens.** Checking session liveness on every request gives immediate revocation at the cost of one Redis lookup per request. A pure stateless JWT would be cheaper but could not be revoked before expiry.
 - **Two ways to deliver the refresh token.** Native and server-side clients get it in the response body, as in the OAuth 2.0 token endpoint; browser clients request `delivery=cookie` and get an HttpOnly cookie. A token is delivered one way only: also returning it in the body would let an injected script read it and defeat the cookie. The access token stays in the body in both modes and should be kept in memory; its 15-minute lifetime limits the damage of an XSS.
-- **Strict reuse detection.** Two concurrent refresh requests with the same token are treated as theft. A short grace window would soften this for flaky clients.
-- **`409` on duplicate registration** reveals that an email is registered. Email verification would remove the leak.
+- **Reuse detection with an optional grace period.** By default any second use of a refresh token is treated as theft, so two concurrent refreshes (a double click, a retry on a flaky network) end the session. `REFRESH_REUSE_GRACE_SECONDS` lets a deployment accept a repeat within a few seconds of the first use as a client retry, as Auth0 and Okta do. The trade-off: inside that window a stolen token is not detected either, so the window is short and off by default. Returning the same new token on a retry would be cleaner but requires storing it, while Redis holds only hashes.
+- **`409` on duplicate registration** reveals that an email is registered. Without email verification the alternative (answering success) would leave the owner unable to understand why they cannot log in. Mass probing is capped by the registration limit; email verification, which would answer every registration with "check your inbox", is the complete fix.
 - **No Bloom filter for email lookups at login.** Considered and rejected: the saving over an indexed database lookup is negligible, and a desynchronised filter would wrongly reject real users.
 - **Client IP behind a reverse proxy.** Throttling and known-IP checks depend on the real client address. Set `FORWARDED_ALLOW_IPS` to the proxy address; otherwise every client appears as the proxy, so a few failed logins block everyone and account lockouts stop applying.
 - **Shared IP addresses.** Users behind one NAT share the per-IP counter. Only users who have not yet logged in from that address can be blocked by someone else's failures; a CAPTCHA after several failures would remove even that.
@@ -199,6 +199,7 @@ Settings are read from environment variables (or `.env`).
 | `JWT_ALGORITHM` | `HS256` | Signing algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Access token lifetime |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `30` | Refresh token and session lifetime |
+| `REFRESH_REUSE_GRACE_SECONDS` | `0` | Seconds after rotation during which the old refresh token is still accepted as a client retry; `0` treats every reuse as theft |
 | `COOKIE_SECURE` | `true` | Mark the refresh cookie `Secure` (HTTPS only); set to `false` only for local development over plain HTTP |
 | `LEAKED_PASSWORDS_FILTER_PATH` | `data/leaked_passwords.bloom` | Bloom filter file |
 | `LOG_LEVEL` | `INFO` | Log level |
