@@ -56,3 +56,12 @@ async def test_docs_can_be_disabled():
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         assert (await client.get("/docs")).status_code == 404
         assert (await client.get("/openapi.json")).status_code == 404
+
+
+async def test_root_describes_the_service(client: AsyncClient):
+    response = await client.get("/")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["service"] == "auth-service"
+    assert body["version"] == get_settings().app_version
+    assert body["source"].startswith("https://github.com/")

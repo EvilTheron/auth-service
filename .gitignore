@@ -18,3 +18,5 @@ htmlcov/
 # Local notes
 docs/JOURNAL.md
 README.ru.md
+
+*.patch

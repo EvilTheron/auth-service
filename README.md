@@ -4,6 +4,8 @@
 
 A standalone authentication and session-management service built with FastAPI, PostgreSQL and Redis. It issues short-lived JWT access tokens and rotating refresh tokens, detects refresh-token theft, manages per-device sessions, throttles credential-guessing attempts, rejects breached passwords using a custom Bloom filter, and records security events in an audit log.
 
+**Live demo:** https://auth-service-demo-wbvu.onrender.com (free tier: the first request after a quiet period takes about a minute while the service wakes up; try `GET /health`).
+
 ## Features
 
 - Registration and login with argon2id password hashing.
@@ -279,9 +281,11 @@ The reference deployment runs on free tiers: the image on a Render web service, 
 | `POSTGRES_SSL_MODE` | `verify-full` |
 | `REDIS_HOST`, `REDIS_PORT` | Internal address of the Key Value instance, created with the `noeviction` memory policy so sessions are never evicted |
 | `COOKIE_SECURE`, `DOCS_ENABLED` | `true`, `false` |
-| `FORWARDED_ALLOW_IPS` | The platform's internal proxy network as a CIDR range. Never `*`: Uvicorn then takes the left-most `X-Forwarded-For` entry, which the client controls, and per-IP limits could be bypassed by sending a fake header |
+| `FORWARDED_ALLOW_IPS` | Every proxy between the client and the app. On Render requests pass through Cloudflare and then a local proxy, so the value is `127.0.0.1,10.0.0.0/8` followed by Cloudflare's published ranges. Never `*`: Uvicorn then takes the left-most `X-Forwarded-For` entry, which the client controls, and per-IP limits could be bypassed by sending a fake header |
 
 GitHub configuration for the deploy job: secret `RENDER_DEPLOY_HOOK_URL` and variable `PUBLIC_URL`. Without the secret the job is skipped.
+
+Verifying the client address: send failed logins with a forged `X-Forwarded-For: 1.2.3.4` header and check the address in the `account locked` log line. On the reference deployment, trusting only the internal network showed `127.0.0.1` (every user shared one address); adding the local proxy showed a Cloudflare address; with Cloudflare's ranges trusted the log shows the real client address and the forged entry is ignored. Trusting Cloudflare means a request sent from inside Cloudflare's network (for example, a Worker) could still supply its own header; a dedicated edge proxy that overwrites the header would close that gap.
 
 Free-tier trade-offs: the web service sleeps after 15 minutes without traffic, so the first request takes about a minute; the free Key Value instance keeps data in memory only, so a restart ends all sessions and resets throttling counters.
 

@@ -69,6 +69,17 @@ async def health(session: SessionDep, redis: RedisDep) -> dict[str, str]:
     return {"status": "ok", "version": get_settings().app_version}
 
 
+REPOSITORY_URL = "https://github.com/EvilTheron/auth-service"
+
+
+async def root() -> dict[str, str]:
+    return {
+        "service": "auth-service",
+        "version": get_settings().app_version,
+        "source": REPOSITORY_URL,
+    }
+
+
 def create_app(settings: Settings) -> FastAPI:
     configure_logging(settings.log_level)
     application = FastAPI(
@@ -84,6 +95,7 @@ def create_app(settings: Settings) -> FastAPI:
     application.include_router(sessions.router)
     application.include_router(admin.router)
     application.get("/health")(health)
+    application.get("/", include_in_schema=False)(root)
     return application
 
 
