@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 from auth_service.api.deps import (
@@ -12,9 +12,10 @@ from auth_service.api.deps import (
     TokenPayloadDep,
     client_info,
 )
+from auth_service.core.config import get_settings
 from auth_service.core.security import create_access_token, verify_password_async
 from auth_service.db.models import AuditEvent, User
-from auth_service.schemas.token import RefreshRequest, Token
+from auth_service.schemas.token import RefreshRequest, Token, TokenDelivery
 from auth_service.schemas.user import PasswordChange, UserCreate, UserRead
 from auth_service.services import audit_service, throttle_service, token_service, user_service
 
@@ -22,6 +23,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 MAX_EMAIL_LENGTH = 254
 MAX_PASSWORD_LENGTH = 128
+
+REFRESH_COOKIE = "refresh_token"
+REFRESH_COOKIE_PATH = "/auth"
 
 
 def _bad_credentials() -> HTTPException:
@@ -58,6 +62,47 @@ def _breached_password() -> HTTPException:
 def _no_store(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
+
+
+def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    settings = get_settings()
+    response.set_cookie(
+        REFRESH_COOKIE,
+        refresh_token,
+        max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
+        path=REFRESH_COOKIE_PATH,
+        secure=settings.cookie_secure,
+        httponly=True,
+        samesite="strict",
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(
+        REFRESH_COOKIE,
+        path=REFRESH_COOKIE_PATH,
+        secure=get_settings().cookie_secure,
+        httponly=True,
+        samesite="strict",
+    )
+
+
+def _issue_tokens(
+    response: Response,
+    access_token: str,
+    refresh_token: str,
+    delivery: TokenDelivery,
+    password_compromised: bool = False,
+) -> Token:
+    _no_store(response)
+    if delivery is TokenDelivery.COOKIE:
+        _set_refresh_cookie(response, refresh_token)
+        return Token(access_token=access_token, password_compromised=password_compromised)
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        password_compromised=password_compromised,
+    )
 
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
@@ -103,6 +148,7 @@ async def login(
     session: SessionDep,
     redis: RedisDep,
     password_filter: PasswordFilterDep,
+    delivery: TokenDelivery = TokenDelivery.BODY,
 ) -> Token:
     email = form.username.strip().lower()
     ip, user_agent = client_info(request)
@@ -137,10 +183,11 @@ async def login(
         user_agent=user_agent,
         details="password found in breach list" if compromised else None,
     )
-    _no_store(response)
-    return Token(
-        access_token=create_access_token(user.id, session_id),
-        refresh_token=refresh_token,
+    return _issue_tokens(
+        response,
+        create_access_token(user.id, session_id),
+        refresh_token,
+        delivery,
         password_compromised=compromised,
     )
 
@@ -149,13 +196,21 @@ async def login(
 async def refresh(
     request: Request,
     response: Response,
-    data: RefreshRequest,
     session: SessionDep,
     redis: RedisDep,
+    data: RefreshRequest | None = None,
+    refresh_cookie: Annotated[str | None, Cookie(alias=REFRESH_COOKIE)] = None,
 ) -> Token:
+    if data is not None:
+        presented, delivery = data.refresh_token, TokenDelivery.BODY
+    elif refresh_cookie is not None:
+        presented, delivery = refresh_cookie, TokenDelivery.COOKIE
+    else:
+        raise _invalid_refresh_token()
+
     try:
         user_id, session_id, new_refresh_token = await token_service.rotate_refresh_token(
-            redis, data.refresh_token
+            redis, presented
         )
     except token_service.RefreshTokenReuseError as exc:
         ip, user_agent = client_info(request)
@@ -171,21 +226,21 @@ async def refresh(
         await token_service.revoke_session(redis, session_id)
         raise _invalid_refresh_token()
 
-    _no_store(response)
-    return Token(
-        access_token=create_access_token(user.id, session_id),
-        refresh_token=new_refresh_token,
+    return _issue_tokens(
+        response, create_access_token(user.id, session_id), new_refresh_token, delivery
     )
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
     request: Request,
+    response: Response,
     payload: TokenPayloadDep,
     session: SessionDep,
     redis: RedisDep,
 ) -> None:
     await token_service.revoke_session(redis, payload["sid"])
+    _clear_refresh_cookie(response)
     ip, user_agent = client_info(request)
     await audit_service.record(
         session,
@@ -199,11 +254,13 @@ async def logout(
 @router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
 async def logout_all(
     request: Request,
+    response: Response,
     user: CurrentUserDep,
     session: SessionDep,
     redis: RedisDep,
 ) -> None:
     await token_service.revoke_all_sessions(redis, user.id)
+    _clear_refresh_cookie(response)
     ip, user_agent = client_info(request)
     await audit_service.record(
         session,

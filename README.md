@@ -76,10 +76,10 @@ All keys have a TTL, so expired data cleans itself up.
 | Endpoint | Description |
 |---|---|
 | `POST /auth/register` | Create an account |
-| `POST /auth/login` | Authenticate (OAuth2 password form), returns an access and refresh token pair |
-| `POST /auth/refresh` | Rotate the token pair |
-| `POST /auth/logout` | End the current session |
-| `POST /auth/logout-all` | End all sessions of the user |
+| `POST /auth/login` | Authenticate (OAuth2 password form), returns an access and refresh token pair. `?delivery=cookie` puts the refresh token in an HttpOnly cookie instead of the body |
+| `POST /auth/refresh` | Rotate the token pair. Reads the refresh token from the JSON body or, if absent, from the cookie, and returns the new one the same way |
+| `POST /auth/logout` | End the current session and clear the refresh cookie |
+| `POST /auth/logout-all` | End all sessions of the user and clear the refresh cookie |
 | `POST /auth/change-password` | Change password and end all other sessions |
 | `GET /users/me` | Current user |
 | `GET /sessions` | List own sessions |
@@ -101,6 +101,7 @@ Interactive documentation is served at `/docs` unless `DOCS_ENABLED=false`.
 | Weak or breached passwords | Bloom-filter screening at registration and password change; `password_compromised` flag at login |
 | Refresh token theft | Rotation with reuse detection: replaying a used token terminates the whole session |
 | Access token theft | Short lifetime and a per-request session liveness check |
+| Refresh token theft via XSS (browser clients) | Cookie delivery: `HttpOnly` (unreadable by scripts), `Secure`, `SameSite=Strict` (not sent cross-site, which also blocks CSRF), `Path=/auth`; the token is then never present in the response body |
 | Race between refresh and logout | Rotation is one atomic Lua script, so a revoked session cannot be recreated |
 | Token leakage via caches | Token responses carry `Cache-Control: no-store` |
 | Account enumeration | Identical responses and equalised timing for unknown email and wrong password |
@@ -132,7 +133,7 @@ A filter built from about one million common passwords at a 0.1% error rate take
 ## Design decisions and trade-offs
 
 - **Session-bound access tokens.** Checking session liveness on every request gives immediate revocation at the cost of one Redis lookup per request. A pure stateless JWT would be cheaper but could not be revoked before expiry.
-- **Refresh tokens are opaque and hashed.** They are returned in the response body for simplicity; a browser client should receive them in an HttpOnly cookie instead.
+- **Two ways to deliver the refresh token.** Native and server-side clients get it in the response body, as in the OAuth 2.0 token endpoint; browser clients request `delivery=cookie` and get an HttpOnly cookie. A token is delivered one way only: also returning it in the body would let an injected script read it and defeat the cookie. The access token stays in the body in both modes and should be kept in memory; its 15-minute lifetime limits the damage of an XSS.
 - **Strict reuse detection.** Two concurrent refresh requests with the same token are treated as theft. A short grace window would soften this for flaky clients.
 - **`409` on duplicate registration** reveals that an email is registered. Email verification would remove the leak.
 - **No Bloom filter for email lookups at login.** Considered and rejected: the saving over an indexed database lookup is negligible, and a desynchronised filter would wrongly reject real users.
@@ -198,6 +199,7 @@ Settings are read from environment variables (or `.env`).
 | `JWT_ALGORITHM` | `HS256` | Signing algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Access token lifetime |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `30` | Refresh token and session lifetime |
+| `COOKIE_SECURE` | `true` | Mark the refresh cookie `Secure` (HTTPS only); set to `false` only for local development over plain HTTP |
 | `LEAKED_PASSWORDS_FILTER_PATH` | `data/leaked_passwords.bloom` | Bloom filter file |
 | `LOG_LEVEL` | `INFO` | Log level |
 | `DOCS_ENABLED` | `true` | Serve `/docs` and `/openapi.json`; disable in production |
@@ -221,7 +223,7 @@ uv run uvicorn auth_service.main:app --reload --no-access-log
 
 ## Testing and quality
 
-The test suite (80+ tests, pytest and httpx) runs against a separate PostgreSQL database and Redis database 1, so development data is never touched. Create the test database once:
+The test suite (90+ tests, pytest and httpx) runs against a separate PostgreSQL database and Redis database 1, so development data is never touched. Create the test database once:
 
 ```bash
 docker compose exec postgres psql -U auth -d auth_service -c "create database auth_service_test;"

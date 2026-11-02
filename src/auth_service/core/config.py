@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 15
     refresh_token_expire_days: int = 30
+    cookie_secure: bool = True
 
     leaked_passwords_filter_path: str = "data/leaked_passwords.bloom"
 
