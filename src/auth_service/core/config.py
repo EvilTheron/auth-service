@@ -25,6 +25,14 @@ class Settings(BaseSettings):
 
     leaked_passwords_filter_path: str = "data/leaked_passwords.bloom"
 
+    login_ip_max_failures: int = 20
+    login_ip_window_seconds: int = 15 * 60
+    login_account_free_attempts: int = 5
+    login_lock_base_seconds: int = 30
+    login_lock_max_seconds: int = 60 * 60
+    login_known_ip_max_failures: int = 5
+    registration_limit_per_hour: int = 10
+
     log_level: str = "INFO"
     docs_enabled: bool = True
 

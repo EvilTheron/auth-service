@@ -65,7 +65,8 @@ sequenceDiagram
 | `used:{sha256}` | Marker set on first use of a refresh token (theft detection) |
 | `user_sessions:{user_id}` | Set of the user's session IDs |
 | `login:fail:ip:*`, `login:fail:acct:*` | Failed-attempt counters |
-| `login:lock:*`, `login:known:*` | Account lockouts and recently used IPs |
+| `login:lock:*`, `login:known:*` | Account lockouts and trusted (email, IP) pairs |
+| `login:fail:known:*` | Failed attempts from a trusted pair |
 | `register:ip:*` | Registration counters per IP |
 
 All keys have a TTL, so expired data cleans itself up.
@@ -95,7 +96,7 @@ Interactive documentation is served at `/docs` unless `DOCS_ENABLED=false`.
 | Threat | Mitigation |
 |---|---|
 | Database leak | Passwords stored as argon2id hashes; refresh tokens stored in Redis only as SHA-256 hashes |
-| Password guessing | Per-IP limit (20 failures per 15 minutes); per-account lockout after 5 failures, 30 s doubling up to 1 hour; checked before password hashing so lockouts do not consume CPU |
+| Password guessing | Per-IP limit (20 failures per 15 minutes); per-account lockout after 5 failures, 30 s doubling up to 1 hour; checked before password hashing so lockouts do not consume CPU. All thresholds are configurable |
 | Registration abuse | At most 10 registrations per IP per hour; password hashing runs in a bounded thread pool so it cannot stall other requests |
 | Weak or breached passwords | Bloom-filter screening at registration and password change; `password_compromised` flag at login |
 | Refresh token theft | Rotation with reuse detection: replaying a used token terminates the whole session |
@@ -104,7 +105,8 @@ Interactive documentation is served at `/docs` unless `DOCS_ENABLED=false`.
 | Token leakage via caches | Token responses carry `Cache-Control: no-store` |
 | Account enumeration | Identical responses and equalised timing for unknown email and wrong password |
 | Token forgery | Signature verification, explicit algorithm allow-list, required claims |
-| Lockout abuse (denial of service) | Lockouts do not apply to IPs the owner has successfully logged in from in the last 30 days |
+| Lockout abuse (denial of service) | An (email, IP) pair that logged in successfully in the last 30 days is trusted: neither the per-IP limit nor the account lockout applies to it, so an attacker cannot lock out the owner or, behind a shared IP (office NAT), everyone who has logged in before |
+| Guessing from a trusted IP | A trusted pair loses its trust after 5 failed attempts and falls back to the per-IP limit and account lockout, so sharing an IP with the victim gives an attacker only a few extra tries |
 | Privilege escalation | Role read from the database on every request, never from the token; admins can only be created by a server-side script; the database rejects unknown roles; foreign session IDs return 404 |
 | Unauthorised Redis access | Redis requires a password and is reachable only from the Docker network and localhost |
 | Weak signing key | The service refuses to start if `JWT_SECRET` is shorter than 32 characters |
@@ -135,6 +137,7 @@ A filter built from about one million common passwords at a 0.1% error rate take
 - **`409` on duplicate registration** reveals that an email is registered. Email verification would remove the leak.
 - **No Bloom filter for email lookups at login.** Considered and rejected: the saving over an indexed database lookup is negligible, and a desynchronised filter would wrongly reject real users.
 - **Client IP behind a reverse proxy.** Throttling and known-IP checks depend on the real client address. Set `FORWARDED_ALLOW_IPS` to the proxy address; otherwise every client appears as the proxy, so a few failed logins block everyone and account lockouts stop applying.
+- **Shared IP addresses.** Users behind one NAT share the per-IP counter. Only users who have not yet logged in from that address can be blocked by someone else's failures; a CAPTCHA after several failures would remove even that.
 - **Migrations run at container start.** Convenient for a single instance; a multi-instance deployment should run them as a separate job.
 
 ## Getting started
@@ -199,6 +202,11 @@ Settings are read from environment variables (or `.env`).
 | `LOG_LEVEL` | `INFO` | Log level |
 | `DOCS_ENABLED` | `true` | Serve `/docs` and `/openapi.json`; disable in production |
 | `FORWARDED_ALLOW_IPS` | `127.0.0.1` | Reverse proxy addresses trusted to set `X-Forwarded-For` |
+| `LOGIN_IP_MAX_FAILURES`, `LOGIN_IP_WINDOW_SECONDS` | `20`, `900` | Per-IP failed-login limit and window |
+| `LOGIN_ACCOUNT_FREE_ATTEMPTS` | `5` | Failures before an account is locked |
+| `LOGIN_LOCK_BASE_SECONDS`, `LOGIN_LOCK_MAX_SECONDS` | `30`, `3600` | First lockout duration (doubles each failure) and its cap |
+| `LOGIN_KNOWN_IP_MAX_FAILURES` | `5` | Failures after which a trusted (email, IP) pair loses its trust |
+| `REGISTRATION_LIMIT_PER_HOUR` | `10` | Registrations per IP per hour |
 
 ## Development
 

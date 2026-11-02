@@ -1,6 +1,8 @@
+import pytest
 from httpx import ASGITransport, AsyncClient
 from redis.asyncio import Redis
 
+from auth_service.core.config import get_settings
 from auth_service.main import app
 from tests.helpers import EMAIL, login, register
 
@@ -77,3 +79,36 @@ async def test_registration_is_rate_limited_per_ip(client: AsyncClient):
     response = await register(client, email="one-more@example.com")
     assert response.status_code == 429
     assert int(response.headers["Retry-After"]) > 0
+
+
+async def test_known_user_can_login_while_ip_is_blocked(client: AsyncClient):
+    await register(client)
+    assert (await login(client)).status_code == 200
+
+    for i in range(20):
+        await login(client, email=f"user{i}@example.com", password="whatever-password")
+    blocked = await login(client, email="newcomer@example.com", password="whatever-password")
+    assert blocked.status_code == 429
+
+    assert (await login(client)).status_code == 200
+
+
+async def test_known_ip_trust_is_revoked_after_repeated_failures(
+    client: AsyncClient, redis_client: Redis
+):
+    await register(client)
+    assert (await login(client)).status_code == 200
+
+    for _ in range(5):
+        assert (await login(client, password="wrong-password")).status_code == 401
+
+    assert not await redis_client.exists(f"login:known:{EMAIL}:127.0.0.1")
+    assert (await login(client)).status_code == 429
+
+
+async def test_limits_come_from_settings(client: AsyncClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(get_settings(), "login_ip_max_failures", 3)
+    for i in range(3):
+        await login(client, email=f"user{i}@example.com", password="whatever-password")
+    response = await login(client, email="another@example.com", password="whatever-password")
+    assert response.status_code == 429
